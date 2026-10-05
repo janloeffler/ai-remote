@@ -6,12 +6,12 @@
     <string>com.example.ai-remote-agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/yourname/source/ai-remote-management/agent/.venv/bin/python3</string>
+        <string>/Users/yourname/source/ai-remote/agent/.venv/bin/python3</string>
         <string>-m</string>
         <string>agent.main</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/yourname/source/ai-remote-management/agent</string>
+    <string>/Users/yourname/source/ai-remote/agent</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>AI_REMOTE_BACKEND_URL</key>

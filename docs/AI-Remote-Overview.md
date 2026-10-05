@@ -168,8 +168,8 @@ Documented in [SECURITY.md](../SECURITY.md); left unfixed because fixing them wo
 ### A. Quickstart (local)
 
 ```bash
-git clone https://github.com/<your-org>/ai-remote-management.git
-cd ai-remote-management
+git clone https://github.com/janloeffler/ai-remote.git
+cd ai-remote
 ./run.sh
 ```
 
@@ -199,7 +199,7 @@ Logs: `~/Library/Logs/ai-remote-agent.log`.
    | Script | How it works |
    |---|---|
    | `deploy-production-scp.sh` | Builds the image, ships it over SCP (no registry), restarts via SSH. Needs `SSH_HOST` and passwordless SSH. |
-   | `build-and-push.sh` | Builds and pushes to `REGISTRY` (e.g. `ghcr.io/<your-org>`); deploy however your platform expects. |
+   | `build-and-push.sh` | Builds and pushes to `REGISTRY` (e.g. `ghcr.io/<your-username>`); deploy however your platform expects. |
    | `deploy-to-plesk.sh` | The author's own Plesk Docker flow (SSH + `docker load`). Needs `PLESK_HOST`. |
 
 3. Terminate TLS in front of the container (port 8000). Behind a reverse proxy, set `TRUSTED_PROXY_HOPS` and `TRUSTED_PROXIES` **together**.

@@ -55,8 +55,8 @@ without polling aggressively all day when you're not.
 Requires Docker, Python 3, and `openssl` (for generating secrets).
 
 ```bash
-git clone <this-repo-url>
-cd ai-remote-management
+git clone https://github.com/janloeffler/ai-remote.git
+cd ai-remote
 ./run.sh
 ```
 
