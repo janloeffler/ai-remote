@@ -1,0 +1,4 @@
+# Test-only dependencies.
+-r requirements.in
+-c requirements.txt
+pytest>=8.3

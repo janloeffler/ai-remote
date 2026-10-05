@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      # Loopback only. This container grants remote command execution on the host
+      # running the agent, and run.sh serves plain http:// (non-Secure cookie), so
+      # publishing it on every interface put the login credential on the wire and the
+      # endpoint on the LAN. Exposing it beyond localhost requires a TLS-terminating
+      # reverse proxy in front of it plus SESSION_COOKIE_HTTPS_ONLY=true — see
+      # deploy-production-scp.sh for how the real deployment does it.
+      - "127.0.0.1:${PORT:-8000}:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - API_KEY=${API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_PATH=/data/app.db
+      - ENABLE_API_DOCS=${ENABLE_API_DOCS:-false}
+      - SESSION_COOKIE_HTTPS_ONLY=${SESSION_COOKIE_HTTPS_ONLY:-true}
+      - TRUSTED_PROXY_HOPS=${TRUSTED_PROXY_HOPS:-0}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      - LOCAL_HOME_DIR=${LOCAL_HOME_DIR:-/Users/yourname}
+      - CHAT_HISTORY_PAGE_SIZE=${CHAT_HISTORY_PAGE_SIZE:-10}
+      - AI_REMOTE_ALLOWED_PROJECTS=${AI_REMOTE_ALLOWED_PROJECTS:-}
+      - AI_REMOTE_INTERVAL_SECONDS=${AI_REMOTE_INTERVAL_SECONDS:-60}
+      - AI_REMOTE_ACTIVE_INTERVAL_SECONDS=${AI_REMOTE_ACTIVE_INTERVAL_SECONDS:-10}
+      - ACTIVE_INTERVAL_DURATION_MIN=${ACTIVE_INTERVAL_DURATION_MIN:-5}
+    restart: unless-stopped

@@ -1,0 +1,7 @@
+{"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-08-01T10:00:00.000Z", "sessionId": "test-session-1"}
+{"parentUuid": null, "isSidechain": false, "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "What changed recently?"}]}, "uuid": "u1", "timestamp": "2026-08-01T10:00:00.100Z", "entrypoint": "claude-vscode", "cwd": "/Users/jan/source/demo", "sessionId": "test-session-1"}
+{"parentUuid": "u1", "isSidechain": false, "type": "assistant", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "let me check"}]}, "timestamp": "2026-08-01T10:00:01.000Z", "sessionId": "test-session-1"}
+{"parentUuid": "u1", "isSidechain": false, "type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "git log"}}]}, "timestamp": "2026-08-01T10:00:02.000Z", "sessionId": "test-session-1"}
+{"parentUuid": "u1", "isSidechain": false, "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Three commits landed yesterday."}]}, "timestamp": "2026-08-01T10:00:03.000Z", "sessionId": "test-session-1"}
+{"type": "ai-title", "sessionId": "test-session-1", "aiTitle": "Recent project changes"}
+{"type": "last-prompt", "lastPrompt": "What changed recently?", "sessionId": "test-session-1"}

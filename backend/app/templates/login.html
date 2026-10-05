@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block header_actions %}{% endblock %}
+{% block tabs %}{% endblock %}
+{% block content %}
+<form method="post" action="/login" class="login-form">
+  <label>{{ t('login.api_key') }} <input type="password" name="api_key" autocomplete="current-password" autofocus></label>
+  <button type="submit" class="primary">{{ t('login.submit') }}</button>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+</form>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('jobs.title') }}</h1>
+<ul class="job-list">
+  {% for j in jobs %}
+  <li>
+    <div class="job-header">
+      <strong>{{ j.type }}</strong>
+      <span class="job-status job-status-{{ j.status }}">{{ j.status }}</span>
+    </div>
+    <p class="job-target">{{ j.target }}</p>
+    {% if j.payload %}<p class="job-payload">{{ j.payload }}</p>{% endif %}
+    {% if j.result_text %}<pre class="job-result">{{ j.result_text }}</pre>{% endif %}
+    <time>{{ j.created_at | localdt }}</time>
+  </li>
+  {% else %}
+  <li>{{ t('jobs.empty') }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

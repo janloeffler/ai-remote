@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="staleness">
+  {% if last_agent_contact %}{{ t('list.last_contact', dt=(last_agent_contact | localdt)) }}
+  {% else %}{{ t('list.never_contact') }}{% endif %}
+</p>
+<form method="get" action="/" class="toolbar">
+  <input type="text" name="q" value="{{ q or '' }}" placeholder="{{ t('list.search') }}">
+  <div class="combobox">
+    <input type="text" id="project-input" name="project" value="{{ project or '' }}"
+           placeholder="{{ t('list.path') }}" autocomplete="off" role="combobox"
+           aria-expanded="false" aria-autocomplete="list" aria-controls="project-listbox">
+    <ul id="project-listbox" class="combobox-listbox" role="listbox" hidden></ul>
+  </div>
+  <select name="tool">
+    <option value="">{{ t('list.all_tools') }}</option>
+    <option value="claude-code" {% if tool == "claude-code" %}selected{% endif %}>Claude Code</option>
+    <option value="cursor" {% if tool == "cursor" %}selected{% endif %}>Cursor</option>
+  </select>
+  <select name="group">
+    <option value="">{{ t('list.group.all') }}</option>
+    <option value="today" {% if group == "today" %}selected{% endif %}>{{ t('list.group.today') }}</option>
+    <option value="yesterday" {% if group == "yesterday" %}selected{% endif %}>{{ t('list.group.yesterday') }}</option>
+    <option value="week" {% if group == "week" %}selected{% endif %}>{{ t('list.group.week') }}</option>
+    <option value="older" {% if group == "older" %}selected{% endif %}>{{ t('list.group.older') }}</option>
+  </select>
+  <select name="sort">
+    <option value="date_desc" {% if sort == "date_desc" %}selected{% endif %}>{{ t('list.sort.date_desc') }}</option>
+    <option value="date_asc" {% if sort == "date_asc" %}selected{% endif %}>{{ t('list.sort.date_asc') }}</option>
+    <option value="title_asc" {% if sort == "title_asc" %}selected{% endif %}>{{ t('list.sort.title_asc') }}</option>
+    <option value="path_asc" {% if sort == "path_asc" %}selected{% endif %}>{{ t('list.sort.path_asc') }}</option>
+  </select>
+  <button type="submit" id="filter-submit">{{ t('list.filter') }}</button>
+</form>
+<script type="application/json" id="project-paths-data">{{ {"paths": project_paths, "homeDir": local_home_dir} | tojson }}</script>
+<ul class="session-list">
+  {% for s in sessions %}
+  <li>
+    <a href="/chats/{{ s.id }}">
+      <div class="session-header">
+        <strong>{{ s.title }}</strong>
+        <span class="tool-badge tool-badge-{{ s.tool }}">{{ s.tool }}</span>
+      </div>
+      <span class="project"><code>{{ s.project_path }}</code></span>
+      <p>{{ s.last_message_preview }}</p>
+      <div class="session-dates">
+        <time class="updated">{{ t('list.updated', dt=(s.last_updated_at | localdt)) }}</time>
+        <time class="created">{{ t('list.started', dt=(s.created_at | localdt)) }}</time>
+      </div>
+    </a>
+  </li>
+  {% else %}
+  <li>{{ t('list.empty') }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

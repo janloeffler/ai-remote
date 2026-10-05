@@ -1,0 +1,17 @@
+# Runtime dependencies only — test tooling lives in requirements-dev.txt so it never
+# ships inside the production image (SEC-010).
+#
+# Floors are pinned above known-vulnerable releases; there is deliberately no upper
+# bound, so a clean build still resolves to current versions. This file is NOT a
+# lockfile: builds re-resolve, and nothing here is hash-pinned. See SECURITY.md.
+fastapi>=0.115
+uvicorn>=0.32            # plain: no uvloop/httptools/websockets/watchfiles/dotenv; uvicorn falls back to asyncio + h11 (smaller attack surface, enough for one user)
+jinja2>=3.1.6          # <3.1.6: CVE-2025-27516 sandbox escape, CVE-2024-56326/56201
+python-multipart>=0.0.18  # <0.0.18: CVE-2024-53981 DoS via malformed multipart (/login)
+h11>=0.16.0            # transitive via uvicorn; <0.16.0: CVE-2025-43859 request smuggling
+itsdangerous>=2.2
+markdown>=3.7
+pygments>=2.18
+httpx>=0.27
+bleach>=6.0
+beautifulsoup4>=4.12

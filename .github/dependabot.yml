@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    # Ignore releases younger than 7 days (security updates are exempt from cooldown).
+    cooldown:
+      default-days: 7
+    groups:
+      backend-python:
+        patterns: ["*"]
+  - package-ecosystem: "pip"
+    directory: "/agent"
+    schedule:
+      interval: "weekly"
+    # Ignore releases younger than 7 days (security updates are exempt from cooldown).
+    cooldown:
+      default-days: 7
+    groups:
+      agent-python:
+        patterns: ["*"]
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    # Ignore releases younger than 7 days (security updates are exempt from cooldown).
+    cooldown:
+      default-days: 7

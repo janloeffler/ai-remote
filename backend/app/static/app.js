@@ -1,0 +1,475 @@
+// UI strings come from the server (see i18n.py), already in the user's language.
+const I18N = (() => {
+  try {
+    return JSON.parse(document.getElementById("i18n-data").textContent);
+  } catch (error) {
+    return {};
+  }
+})();
+
+function t(key, vars) {
+  let text = I18N[key] || key;
+  for (const [name, value] of Object.entries(vars || {})) {
+    text = text.split(`{${name}}`).join(value);
+  }
+  return text;
+}
+
+// The server's technical error codes (HTTPException.detail), shown in the user's language.
+function errorText(detail) {
+  return detail ? I18N[`js.err.${detail}`] || detail : null;
+}
+
+function makeCountdown(statusNode, verbKey) {
+  let countdownId = null;
+  const stop = () => {
+    if (countdownId) {
+      clearInterval(countdownId);
+      countdownId = null;
+    }
+  };
+  const start = (remaining) => {
+    remaining = Number.isFinite(remaining) ? remaining : 0;
+    const hasTimeLeft = remaining > 0;
+    stop();
+    const tick = () => {
+      if (remaining <= 0) {
+        statusNode.textContent = t("js.wait_soon", { verb: t(verbKey) });
+        stop();
+        return;
+      }
+      statusNode.textContent = t("js.wait", { verb: t(verbKey), s: remaining });
+      remaining -= 1;
+    };
+    tick();
+    if (hasTimeLeft) countdownId = setInterval(tick, 1000);
+  };
+  return { start, stop };
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const status = document.getElementById("fetch-status");
+  const loadMoreButton = document.getElementById("load-more");
+  const loadAllButton = document.getElementById("load-all");
+  if (!status || (!loadMoreButton && !loadAllButton)) return;
+
+  const sessionId = (loadMoreButton || loadAllButton).dataset.sessionId;
+
+  const setButtonsDisabled = (disabled) => {
+    if (loadMoreButton) loadMoreButton.disabled = disabled;
+    if (loadAllButton) loadAllButton.disabled = disabled;
+  };
+
+  const { start: startCountdown, stop: stopCountdown } = makeCountdown(status, "js.loading");
+
+  const poll = async (jobId) => {
+    try {
+      const statusRes = await fetch(`/chats/${sessionId}/status?job_id=${jobId}`);
+      if (!statusRes.ok) {
+        throw new Error(`HTTP ${statusRes.status}`);
+      }
+      const data = await statusRes.json();
+      if (data.status === "done" || data.status === "failed") {
+        stopCountdown();
+        status.textContent = data.status === "done" ? t("js.done_reload") : t("js.failed");
+        if (data.status === "done") {
+          location.reload();
+        } else {
+          setButtonsDisabled(false);
+        }
+      } else {
+        setTimeout(() => poll(jobId), 3000);
+      }
+    } catch (error) {
+      stopCountdown();
+      status.textContent = t("js.conn_lost_page");
+      setButtonsDisabled(false);
+    }
+  };
+
+  const startFetch = async (full) => {
+    setButtonsDisabled(true);
+    status.textContent = `${t("js.loading")}…`;
+    try {
+      const url = `/chats/${sessionId}/fetch-full${full ? "?full=true" : ""}`;
+      const res = await fetch(url, { method: "POST" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const { job_id, eta_seconds } = await res.json();
+      startCountdown(eta_seconds);
+      poll(job_id);
+    } catch (error) {
+      stopCountdown();
+      status.textContent = t("js.start_error");
+      setButtonsDisabled(false);
+    }
+  };
+
+  if (loadMoreButton) loadMoreButton.addEventListener("click", () => startFetch(false));
+  if (loadAllButton) loadAllButton.addEventListener("click", () => startFetch(true));
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const input = document.getElementById("project-input");
+  const listbox = document.getElementById("project-listbox");
+  const dataScript = document.getElementById("project-paths-data");
+  if (!input || !listbox || !dataScript) return;
+
+  const { paths, homeDir } = JSON.parse(dataScript.textContent);
+  let activeIndex = -1;
+
+  const expandHome = (value) => {
+    if (value === "~") return homeDir;
+    if (value.startsWith("~/")) return homeDir.replace(/\/$/, "") + "/" + value.slice(2);
+    return value;
+  };
+
+  const currentMatches = () => {
+    const needle = expandHome(input.value).toLowerCase();
+    if (!needle) return paths;
+    return paths.filter((p) => p.toLowerCase().includes(needle));
+  };
+
+  const select = (path) => {
+    input.value = path;
+    listbox.hidden = true;
+    activeIndex = -1;
+    input.setAttribute("aria-expanded", "false");
+    input.form.requestSubmit();
+  };
+
+  const render = (matches) => {
+    listbox.innerHTML = "";
+    matches.forEach((path, i) => {
+      const li = document.createElement("li");
+      li.textContent = path;
+      li.setAttribute("role", "option");
+      if (i === activeIndex) li.classList.add("active");
+      li.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        select(path);
+      });
+      listbox.appendChild(li);
+    });
+    listbox.hidden = matches.length === 0;
+    input.setAttribute("aria-expanded", matches.length > 0 ? "true" : "false");
+  };
+
+  input.addEventListener("input", () => {
+    activeIndex = -1;
+    render(currentMatches());
+  });
+
+  input.addEventListener("focus", () => {
+    render(currentMatches());
+  });
+
+  input.addEventListener("keydown", (event) => {
+    const matches = currentMatches();
+    if (listbox.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      render(matches);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      activeIndex = Math.min(activeIndex + 1, matches.length - 1);
+      render(matches);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+      render(matches);
+    } else if (event.key === "Enter") {
+      if (activeIndex >= 0 && matches[activeIndex]) {
+        event.preventDefault();
+        select(matches[activeIndex]);
+      }
+    } else if (event.key === "Escape") {
+      listbox.hidden = true;
+      activeIndex = -1;
+      input.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      listbox.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+    }, 100);
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("command-form");
+  if (!form) return;
+  const sessionId = form.dataset.sessionId;
+  const status = document.getElementById("command-status");
+  const button = form.querySelector("button[type=submit]");
+  const countdown = makeCountdown(status, "js.sending");
+
+  const poll = (jobId) => {
+    fetch(`/jobs/${jobId}/status`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (data.status === "done") {
+          countdown.stop();
+          status.textContent = t("js.command_done");
+        } else if (data.status === "failed") {
+          countdown.stop();
+          status.textContent = t("js.failed_detail", { msg: data.result_text || t("js.unknown_error") });
+          button.disabled = false;
+        } else {
+          setTimeout(() => poll(jobId), 3000);
+        }
+      })
+      .catch(() => {
+        countdown.stop();
+        status.textContent = t("js.conn_lost");
+        button.disabled = false;
+      });
+  };
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    status.textContent = `${t("js.sending")}…`;
+    const prompt = form.prompt.value;
+    fetch(`/chats/${sessionId}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    })
+      .then((res) =>
+        res
+          .json()
+          .catch(() => ({}))
+          .then((data) => ({ ok: res.ok, data }))
+      )
+      .then(({ ok, data }) => {
+        if (!ok) {
+          status.textContent = errorText(data && data.detail) || t("js.send_error");
+          button.disabled = false;
+          return;
+        }
+        countdown.start(data.eta_seconds);
+        poll(data.job_id);
+      })
+      .catch(() => {
+        countdown.stop();
+        status.textContent = t("js.send_error");
+        button.disabled = false;
+      });
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const select = document.getElementById("project-select");
+  if (!select) return;
+  const last = localStorage.getItem("lastProject");
+  if (last && [...select.options].some((option) => option.value === last)) {
+    select.value = last;
+  }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("new-session-form");
+  if (!form) return;
+  const status = document.getElementById("command-status");
+  const button = form.querySelector("button[type=submit]");
+  const countdown = makeCountdown(status, "js.sending");
+
+  const poll = (jobId, projectPath) => {
+    fetch(`/jobs/${jobId}/status`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (data.status === "done") {
+          countdown.stop();
+          status.textContent = t("js.new_done");
+          button.disabled = false;
+        } else if (data.status === "failed") {
+          countdown.stop();
+          status.textContent = t("js.failed_detail", { msg: data.result_text || t("js.unknown_error") });
+          button.disabled = false;
+        } else {
+          setTimeout(() => poll(jobId, projectPath), 3000);
+        }
+      })
+      .catch(() => {
+        countdown.stop();
+        status.textContent = t("js.conn_lost");
+        button.disabled = false;
+      });
+  };
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    status.textContent = `${t("js.sending")}…`;
+    const projectPath = form.project_path.value;
+    const prompt = form.prompt.value;
+    const tool = form.tool.value;
+    fetch("/projects/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_path: projectPath, tool, prompt }),
+    })
+      .then((res) =>
+        res
+          .json()
+          .catch(() => ({}))
+          .then((data) => ({ ok: res.ok, data }))
+      )
+      .then(({ ok, data }) => {
+        if (!ok) {
+          status.textContent = errorText(data && data.detail) || t("js.send_error");
+          button.disabled = false;
+          return;
+        }
+        localStorage.setItem("lastProject", projectPath);
+        countdown.start(data.eta_seconds);
+        poll(data.job_id, projectPath);
+      })
+      .catch(() => {
+        countdown.stop();
+        status.textContent = t("js.send_error");
+        button.disabled = false;
+      });
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.querySelector("form.toolbar");
+  if (!form) return;
+
+  form.querySelectorAll("select").forEach((select) => {
+    select.addEventListener("change", () => form.requestSubmit());
+  });
+
+  form.querySelectorAll('input[type="text"]').forEach((input) => {
+    input.setAttribute("enterkeyhint", "search");
+    input.addEventListener("blur", (event) => {
+      if (event.relatedTarget && event.relatedTarget.closest("a")) return;
+      if (input.value !== input.defaultValue) form.requestSubmit();
+    });
+  });
+});
+
+// Dark/light switch (Settings page). The choice is per device, kept in localStorage and
+// applied before first paint by the inline script in base.html.
+document.addEventListener("DOMContentLoaded", () => {
+  const toggle = document.getElementById("theme-switch");
+  if (!toggle) return;
+
+  const effectiveTheme = () => {
+    const explicit = document.documentElement.getAttribute("data-theme");
+    if (explicit === "light" || explicit === "dark") return explicit;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  };
+
+  toggle.checked = effectiveTheme() === "dark";
+  toggle.addEventListener("change", () => {
+    const theme = toggle.checked ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("theme", theme);
+    } catch (error) {
+      /* private mode: the choice just won't persist */
+    }
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".copy-button").forEach((button) => {
+    const content = button.closest(".message").querySelector(".message-content");
+    button.addEventListener("click", async () => {
+      const html = content.innerHTML;
+      const text = content.textContent;
+      try {
+        if (window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              "text/html": new Blob([html], { type: "text/html" }),
+              "text/plain": new Blob([text], { type: "text/plain" }),
+            }),
+          ]);
+        } else {
+          await navigator.clipboard.writeText(text);
+        }
+        button.textContent = "✓";
+      } catch (error) {
+        button.textContent = "✗";
+      }
+      setTimeout(() => {
+        button.textContent = "📋";
+      }, 1500);
+    });
+  });
+});
+
+// Voice input for the prompt textareas. Feature-detected: on browsers without
+// SpeechRecognition (notably iOS Safari, which has never implemented it) the
+// mic button simply stays hidden — no dead UI, no error.
+document.addEventListener("DOMContentLoaded", () => {
+  const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionImpl) return;
+
+  document.querySelectorAll(".mic-button").forEach((button) => {
+    const textarea = button.closest(".prompt-row")?.querySelector("textarea");
+    if (!textarea) return;
+    button.hidden = false;
+
+    let recognition = null;
+    let baseValue = "";
+
+    const stopListening = () => {
+      button.classList.remove("listening");
+      if (recognition) {
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        recognition.stop();
+        recognition = null;
+      }
+    };
+
+    button.addEventListener("click", () => {
+      if (recognition) {
+        stopListening();
+        return;
+      }
+      baseValue = textarea.value;
+      recognition = new SpeechRecognitionImpl();
+      recognition.lang = t("js.speech_lang");
+      recognition.interimResults = true;
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        let transcript = "";
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        textarea.value = baseValue ? `${baseValue} ${transcript}` : transcript;
+      };
+      recognition.onerror = stopListening;
+      recognition.onend = stopListening;
+
+      recognition.start();
+      button.classList.add("listening");
+    });
+  });
+});
+
+// Manual reload: the app runs as an iOS home-screen PWA, which gets no native
+// reload gesture at all (no browser chrome, and standalone mode ignores the
+// bounce-to-refresh a normal Safari tab has), so it needs an explicit button.
+document.addEventListener("DOMContentLoaded", () => {
+  const button = document.getElementById("reload-button");
+  if (!button) return;
+  button.addEventListener("click", () => location.reload());
+});

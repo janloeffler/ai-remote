@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('new.title') }}</h1>
+{% if not allowed_projects %}
+<p>{{ t('new.no_projects') }}</p>
+{% else %}
+<form id="new-session-form">
+  <label for="project-select">{{ t('new.project') }}</label>
+  <select id="project-select" name="project_path">
+    {% for path in allowed_projects %}
+    <option value="{{ path }}">{{ path }}</option>
+    {% endfor %}
+  </select>
+  <select name="tool" aria-label="Tool">
+    <option value="claude-code">Claude Code</option>
+    <option value="cursor">Cursor</option>
+  </select>
+  <div class="prompt-row">
+    <textarea name="prompt" placeholder="{{ t('new.prompt') }}" required></textarea>
+    <button type="button" class="mic-button" aria-label="{{ t('common.voice') }}" hidden>🎤</button>
+  </div>
+  <button type="submit">{{ t('common.send') }}</button>
+  <p id="command-status"></p>
+</form>
+{% endif %}
+{% endblock %}

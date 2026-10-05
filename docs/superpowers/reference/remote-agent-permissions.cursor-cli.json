@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(**)",
+      "Shell(npm test:*)",
+      "Shell(pytest:*)",
+      "Shell(python -m pytest:*)"
+    ],
+    "deny": [
+      "Shell(git push:*)",
+      "Shell(rm)",
+      "Shell(sudo)",
+      "Shell(curl)",
+      "Shell(wget)",
+      "Shell(nc)",
+      "Shell(ssh)",
+      "Shell(osascript)",
+      "Read(.env*)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa*)",
+      "WebFetch(*)"
+    ]
+  }
+}

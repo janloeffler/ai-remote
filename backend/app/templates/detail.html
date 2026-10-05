@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+{% if session is none %}
+<p>{{ t('detail.not_found') }}</p>
+{% else %}
+<h1>{{ session.title }}</h1>
+<p class="session-meta"><code>{{ session.project_path }}</code> — <span class="tool-badge tool-badge-{{ session.tool }}">{{ session.tool }}</span></p>
+{% if session.loaded_message_count == 0 %}
+<div>{{ session.last_message_preview | markdown | safe }}</div>
+{% else %}
+<div class="messages">
+  {% for m in messages %}
+  <div class="message message-{{ m.role }}">
+    <div class="message-head">
+      <time>{{ m.timestamp | localdt }}</time>
+      <button class="copy-button" type="button" aria-label="{{ t('detail.copy') }}">📋</button>
+    </div>
+    <div class="message-content">{{ m.content | markdown | safe }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if not session.full_content_synced %}
+<div class="history-actions">
+  <button id="load-more" data-session-id="{{ session.id }}">{{ t('detail.load_more') }}</button>
+  <button id="load-all" data-session-id="{{ session.id }}">{{ t('detail.load_all') }}</button>
+  <p id="fetch-status"></p>
+</div>
+{% endif %}
+{% if command_allowed %}
+<form id="command-form" data-session-id="{{ session.id }}">
+  <div class="prompt-row">
+    <textarea name="prompt" placeholder="{{ t('detail.command_placeholder') }}" required></textarea>
+    <button type="button" class="mic-button" aria-label="{{ t('common.voice') }}" hidden>🎤</button>
+  </div>
+  <button type="submit">{{ t('common.send') }}</button>
+  <p id="command-status"></p>
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

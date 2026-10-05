@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('settings.title') }}</h1>
+{% if saved %}<p class="notice" role="status">{{ t('settings.saved') }}</p>{% endif %}
+{% for error in errors %}<p class="error" role="alert">{{ error }}</p>{% endfor %}
+
+<form method="post" action="/settings" class="settings-form">
+  <section class="card">
+    <h2>{{ t('settings.language') }}</h2>
+    <select name="language" aria-label="{{ t('settings.language') }}">
+      <option value="auto" {% if language == 'auto' %}selected{% endif %}>{{ t('settings.language.auto') }}</option>
+      <option value="de" {% if language == 'de' %}selected{% endif %}>{{ t('settings.language.de') }}</option>
+      <option value="en" {% if language == 'en' %}selected{% endif %}>{{ t('settings.language.en') }}</option>
+    </select>
+  </section>
+
+  <section class="card">
+    <h2>{{ t('settings.appearance') }}</h2>
+    <label class="switch-row" for="theme-switch">
+      <span>{{ t('settings.dark_mode') }}</span>
+      <input type="checkbox" id="theme-switch" role="switch">
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>{{ t('settings.sync') }}</h2>
+    <p class="hint">{{ t('settings.sync_hint') }}</p>
+    <label class="field">
+      <span>{{ t('settings.interval_default') }}</span>
+      <input type="number" inputmode="numeric" name="interval_default" value="{{ interval_default }}"
+             min="{{ standard_range[0] }}" max="{{ standard_range[1] }}" step="1"
+             placeholder="{{ t('settings.interval_placeholder', n=env_interval_default) }}">
+      <small class="hint">{{ t('settings.interval_default_hint') }} ({{ standard_range[0] }}–{{ standard_range[1] }})</small>
+    </label>
+    <label class="field">
+      <span>{{ t('settings.interval_active') }}</span>
+      <input type="number" inputmode="numeric" name="interval_active" value="{{ interval_active }}"
+             min="{{ active_range[0] }}" max="{{ active_range[1] }}" step="1"
+             placeholder="{{ t('settings.interval_placeholder', n=env_interval_active) }}">
+      <small class="hint">{{ t('settings.interval_active_hint', n=active_minutes) }} ({{ active_range[0] }}–{{ active_range[1] }})</small>
+    </label>
+  </section>
+
+  <button type="submit" class="primary save-button">{{ t('settings.save') }}</button>
+</form>
+
+<section class="card">
+  <h2>{{ t('settings.remote') }}</h2>
+  <p class="hint">{{ t('settings.remote_off') if remote_commands_paused else t('settings.remote_on') }}</p>
+  <form method="post" action="/settings/pause-remote-commands" class="inline-form">
+    <input type="hidden" name="paused" value="{{ 'false' if remote_commands_paused else 'true' }}">
+    <button type="submit">{{ t('pause.resume') if remote_commands_paused else t('pause.pause') }}</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>{{ t('settings.account') }}</h2>
+  <form method="post" action="/logout" class="inline-form">
+    <button type="submit" class="danger"><svg class="icon"><use href="#i-logout"/></svg> {{ t('settings.logout') }}</button>
+  </form>
+</section>
+{% endblock %}

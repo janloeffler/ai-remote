@@ -1,0 +1,61 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- Python: coverage / packaging ---
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+
+# --- Environment / secrets ---
+.env
+*.env
+!example.env
+!backend/example.env
+
+# --- Databases ---
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# --- Agent runtime state ---
+agent/.local_run_state.json
+
+# --- Docker ---
+docker-images/
+
+# --- Logs ---
+*.log
+
+# --- Security audit working files (not for publication) ---
+security-review-plan.md
+security-review-notes.md
+security-review-report.md
+security-review-findings.json
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# --- Editors / IDE ---
+.vscode/
+.idea/
+*.swp
+
+# --- Claude / superpowers tooling ---
+.superpowers/
+.claude/worktrees/
+.playwright-mcp/

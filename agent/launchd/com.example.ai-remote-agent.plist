@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.ai-remote-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/yourname/source/ai-remote-management/agent/.venv/bin/python3</string>
+        <string>-m</string>
+        <string>agent.main</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/yourname/source/ai-remote-management/agent</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AI_REMOTE_BACKEND_URL</key>
+        <string>https://your-domain.example.com</string>
+        <key>AI_REMOTE_API_KEY</key>
+        <string>REPLACE_WITH_REAL_API_KEY</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/yourname/Library/Logs/ai-remote-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/yourname/Library/Logs/ai-remote-agent.error.log</string>
+</dict>
+</plist>

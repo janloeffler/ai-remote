@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="{{ request.state.lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}{{ t('app.name') }}{% endblock %}</title>
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="{{ t('app.name') }}">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+</head>
+<body>
+  {% include "_icons.html" %}
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="{{ t('app.name') }}">
+      <img src="/static/icons/icon.svg" alt="" width="30" height="30">
+      <span class="brand-name">{{ t('app.name') }}</span>
+    </a>
+    <div class="header-actions">
+      {% block header_actions %}
+      {% if poll_mode is defined %}
+      {% set poll_label = t('poll.active') if poll_mode == 'active' else t('poll.default') %}
+      <a href="/settings" class="poll-chip poll-mode-{{ poll_mode }}" title="{{ t('poll.title', n=poll_interval_seconds) }}">
+        <span class="poll-dot" aria-hidden="true"></span>
+        <span class="poll-long">{{ poll_label }} ({{ poll_interval_seconds }}s)</span>
+        <span class="poll-short">{{ poll_interval_seconds }}s</span>
+      </a>
+      {% endif %}
+      {% if remote_commands_paused is defined %}
+      <form method="post" action="/settings/pause-remote-commands" class="header-form">
+        <input type="hidden" name="paused" value="{{ 'false' if remote_commands_paused else 'true' }}">
+        {% set pause_label = t('pause.resume') if remote_commands_paused else t('pause.pause') %}
+        <button id="pause-toggle" type="submit" class="icon-btn {{ 'is-paused' if remote_commands_paused }}" aria-label="{{ pause_label }}" title="{{ pause_label }}">
+          <svg class="icon {{ 'icon-fill' if remote_commands_paused }}"><use href="#i-{{ 'play' if remote_commands_paused else 'pause' }}"/></svg>
+        </button>
+      </form>
+      {% endif %}
+      <button id="reload-button" type="button" class="icon-btn" aria-label="{{ t('nav.refresh') }}" title="{{ t('nav.refresh') }}">
+        <svg class="icon"><use href="#i-reload"/></svg>
+      </button>
+      {% endblock %}
+    </div>
+  </header>
+  {% block tabs %}
+  {% set path = request.url.path %}
+  <nav class="tabs" aria-label="{{ t('nav.main') }}">
+    <a href="/" class="{{ 'active' if path == '/' or path.startswith('/chats') }}"><svg class="icon"><use href="#i-chats"/></svg><span>{{ t('nav.chats') }}</span></a>
+    <a href="/projects/new" class="{{ 'active' if path.startswith('/projects') }}"><svg class="icon"><use href="#i-new"/></svg><span>{{ t('nav.new_session') }}</span></a>
+    <a href="/jobs" class="{{ 'active' if path.startswith('/jobs') }}"><svg class="icon"><use href="#i-audit"/></svg><span>{{ t('nav.audit') }}</span></a>
+    <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}"><svg class="icon"><use href="#i-settings"/></svg><span>{{ t('nav.settings') }}</span></a>
+  </nav>
+  {% endblock %}
+  {% if remote_commands_paused %}
+  <div class="paused-banner">{{ t('pause.banner') }}</div>
+  {% endif %}
+  <main>{% block content %}{% endblock %}</main>
+  <footer class="build-info">{{ t('footer.version', ts=build_timestamp) }}</footer>
+  <script type="application/json" id="i18n-data">{{ js_strings() | tojson }}</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
