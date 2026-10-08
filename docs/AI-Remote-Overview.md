@@ -154,7 +154,7 @@ Documented in [SECURITY.md](../SECURITY.md); left unfixed because fixing them wo
 
 ### Hardening checklist
 
-1. Generate both secrets with `openssl rand -hex 32`.
+1. Generate both secrets with `./generate-secrets.sh` (never prints them; `--rotate` to replace).
 2. Keep the backend on loopback behind a TLS reverse proxy.
 3. Allow-list the smallest set of projects and read every permission profile line by line.
 4. Rotate both secrets if either was ever printed, pasted into a chat, or captured in a transcript.

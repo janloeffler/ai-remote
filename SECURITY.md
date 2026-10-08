@@ -115,7 +115,7 @@ proportion to a single-user tool.
 
 ## If you deploy this yourself
 
-1. Generate `API_KEY` and `SECRET_KEY` with `openssl rand -hex 32`. Never reuse a
+1. Generate `API_KEY` and `SECRET_KEY` with `./generate-secrets.sh` (256-bit random values, appended to `.env` and never printed; `--rotate` replaces existing ones). Never reuse a
    password you have typed anywhere else.
 2. Keep the backend behind a TLS-terminating reverse proxy, on loopback, with
    `SESSION_COOKIE_HTTPS_ONLY=true`.

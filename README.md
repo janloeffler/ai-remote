@@ -76,6 +76,8 @@ setup details.
 
 ## Configuration
 
+`./generate-secrets.sh` creates `API_KEY` and `SECRET_KEY` (256-bit random) and appends them to `.env` without printing them or touching existing entries. `./generate-secrets.sh --rotate` replaces both; afterwards redeploy and re-run `./setup-agent.sh`.
+
 All variables live in one repo-root `.env` (copy `example.env` to start).
 Both the backend container and the local agent read from it — the backend
 via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
