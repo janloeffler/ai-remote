@@ -176,3 +176,8 @@ def test_markdown_escapes_path_in_attributes():
     html = render_markdown('[Image: source: /a/"><script>x</script>.png]', ctx)
     assert "<script>" not in html
 
+
+
+def test_marker_without_an_image_path_stays_plain_text():
+    html = render_markdown("write [Image: source: …] like this", ImageContext(session_id=SID))
+    assert "image-fetch" not in html

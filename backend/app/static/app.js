@@ -571,7 +571,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!button || button.getAttribute("aria-busy") === "true") return;
     const sessionId = button.dataset.sessionId;
     const label = button.querySelector(".image-fetch-label");
-    const original = label.textContent;
+    // The plain label is remembered once: retries must not pile messages onto the last one.
+    if (!label.dataset.original) label.dataset.original = label.textContent;
+    const original = label.dataset.original;
     const fail = (message) => {
       button.removeAttribute("aria-busy");
       label.textContent = `${original} — ${message}`;

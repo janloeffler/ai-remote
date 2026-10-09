@@ -35,7 +35,10 @@ def _tokenize_images(text: str, refs: list[str]) -> str:
 
     parts = _FENCE_RE.split(text)
     for i in range(0, len(parts), 2):
-        parts[i] = _images.MARKER_RE.sub(lambda m: token(m.group(1).strip()), parts[i])
+        parts[i] = _images.MARKER_RE.sub(
+            lambda m: token(m.group(1).strip()) if _images.is_image_path(m.group(1).strip()) else m.group(0),
+            parts[i],
+        )
         parts[i] = _images.BARE_PATH_RE.sub(lambda m: token(m.group(1)), parts[i])
     return "".join(parts)
 
