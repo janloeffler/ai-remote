@@ -232,6 +232,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 pre, table { overflow-x: auto; max-width: 100%; }
 table { display: block; }
 .message-content table {
+  width: fit-content;
   border-collapse: separate;
   border-spacing: 0;
   margin: 0.75rem 0;
