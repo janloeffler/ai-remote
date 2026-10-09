@@ -1,4 +1,4 @@
-# AI Remote Management
+# AI Remote
 
 Browse and remote-control your [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Cursor](https://cursor.com) chat sessions from your phone — read your Mac's local chat history anywhere, and send follow-up prompts back to a `claude`/`cursor-agent` process running on your Mac.
 
@@ -52,7 +52,7 @@ without polling aggressively all day when you're not.
 
 ## Quickstart (local development)
 
-Requires Docker, Python 3, and `openssl` (for generating secrets).
+Requires macOS (the agent reads macOS chat-history locations and installs as a `launchd` service), Docker, Python 3, and `openssl` (for generating secrets).
 
 ```bash
 git clone https://github.com/janloeffler/ai-remote.git
@@ -84,14 +84,15 @@ via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
 
 | Variable | Default | Used by | Purpose |
 |---|---|---|---|
-| `API_KEY` | *(required, ≥32 chars)* | backend, agent | Shared secret; the agent sends it as `Authorization: Bearer <API_KEY>`, the browser exchanges it once at `/login` for a session cookie. Generate with `openssl rand -hex 32`; the backend fails fast at import if it's shorter. |
-| `SECRET_KEY` | *(required, ≥32 chars)* | backend | Cookie-signing secret for the browser session. Generate with `openssl rand -hex 32`; the backend fails fast at import if it's shorter. |
+| `API_KEY` | *(required, ≥32 chars)* | backend, agent | Shared secret; the agent sends it as `Authorization: Bearer <API_KEY>`, the browser exchanges it once at `/login` for a session cookie. Generate with `./generate-secrets.sh`; the backend fails fast at import if it's shorter. |
+| `SECRET_KEY` | *(required, ≥32 chars)* | backend | Cookie-signing secret for the browser session. Generate with `./generate-secrets.sh`; the backend fails fast at import if it's shorter. Rotating it (or `API_KEY`) invalidates every existing session. |
 | `PORT` | `8000` | backend (local) | Local port `run.sh`/`docker-compose.yml` bind. |
 | `DATABASE_PATH` | `app.db` | backend | SQLite file location. |
 | `SESSION_COOKIE_HTTPS_ONLY` | `true` | backend | Marks the session cookie `Secure`. `run.sh` forces `false` for local `http://` testing. |
 | `LOCAL_HOME_DIR` | `/Users/yourname` | backend | Your Mac's home directory, for `~`/`~/` expansion in the chat-list path filter. |
 | `CHAT_HISTORY_PAGE_SIZE` | `10` | backend | Messages loaded per "load more" click. |
 | `AI_REMOTE_BACKEND_URL` | — | agent | Where the agent sends sync/job requests. |
+| `AI_REMOTE_STATE_PATH` | `~/.ai-remote-agent/sync_state.json` | agent | Where the agent remembers which sessions it has already synced. |
 | `AI_REMOTE_INTERVAL_SECONDS` | `60` | backend | Default (idle) poll interval. Only affects the agent's very first cycle — `setup-agent.sh` doesn't bake it into the installed launchd plist, so afterward the agent obeys whatever interval the backend reports. Can be overridden at runtime under **Settings**. |
 | `AI_REMOTE_ACTIVE_INTERVAL_SECONDS` | `10` | backend | Poll interval during an active window. Can be overridden at runtime under **Settings**. |
 | `ACTIVE_INTERVAL_DURATION_MIN` | `5` | backend | How long an active window lasts after any authenticated request from the phone (navigating, filtering, or a job-creating action). |
@@ -119,15 +120,29 @@ Three deploy paths exist, pick one:
 
 All three read `API_KEY`/`SECRET_KEY`/etc. from the same `.env` and expect
 TLS to be terminated in front of the container (Plesk, or your own reverse
-proxy) — the app itself only sets `SESSION_COOKIE_HTTPS_ONLY=true` and
-expects to be reached over HTTPS in production.
+proxy). The app expects to be reached over HTTPS in production: both
+`deploy-*.sh` scripts always ship `SESSION_COOKIE_HTTPS_ONLY=true` to the
+server, whatever the local `.env` says (`run.sh` sets it to `false` there for
+`http://localhost` testing). `deploy-to-plesk.sh` forwards a fixed set of
+variables (keys, `LOCAL_HOME_DIR`, `CHAT_HISTORY_PAGE_SIZE`, the three poll
+settings, `AI_REMOTE_ALLOWED_PROJECTS`, `TRUSTED_PROXY_*`); `ENABLE_API_DOCS` is
+deliberately not among them, so the API docs stay off in production.
+
+After a deploy, check `/login` returns 200 and that an agent request without the key
+returns 401. To rotate the secrets, see `./generate-secrets.sh --rotate` above.
 
 ## Security model
 
 - **Auth:** one static API key, checked via `Authorization: Bearer` for the
   agent's endpoints and exchanged for a signed session cookie for the
   browser. No user accounts, no multi-tenancy — anyone with the API key has
-  full access.
+  full access. Keys must be at least 32 characters (`./generate-secrets.sh`
+  makes 256-bit ones) and are compared in constant time.
+- **Sessions:** the cookie is signed, `SameSite=Lax`, `Secure` in production and
+  valid for 14 days. It carries a fingerprint of `API_KEY`, so rotating
+  `API_KEY` (or `SECRET_KEY`) invalidates every session; `/logout` ends the
+  current one. Sessions are stateless, so a single stolen cookie cannot be
+  revoked on its own — see [`SECURITY.md`](SECURITY.md).
 - **Login rate-limiting:** failed `/login` attempts are throttled per
   client-key bucket, bounded to `MAX_TRACKED_KEYS=4096` tracked buckets with
   least-recently-active eviction once that cap is exceeded. This is
@@ -149,11 +164,14 @@ expects to be reached over HTTPS in production.
   remote commands for that project fail closed rather than running
   unconstrained. Leave `AI_REMOTE_ALLOWED_PROJECTS` empty to disable remote
   command execution entirely.
-- **Kill switch:** the list page's "pause remote commands" toggle stops new
-  `resume`/`new-session` jobs from being picked up without touching the
+- **Kill switch:** the pause button in the header (also under Settings) stops
+  new `resume`/`new-session` jobs from being picked up without touching the
   read-only sync path.
-- **Audit trail:** `/jobs` lists every job ever created — type, target,
-  prompt, status, result.
+- **Audit trail:** the Audit log tab (`/jobs`) lists every job ever created —
+  type, target, prompt, status, result.
+- **Supply chain:** dependencies are hash-pinned and installed with
+  `--require-hashes`; the lockfile tooling ignores releases younger than 7 days
+  (see [Dependencies](#dependencies)).
 - Known limitations beyond this are tracked in [`SECURITY.md`](SECURITY.md).
 
 ## Project structure
@@ -161,9 +179,19 @@ expects to be reached over HTTPS in production.
 ```
 backend/    FastAPI app: auth, chat list/detail/search, job queue, SQLite+FTS5
 agent/      Local polling agent: Claude Code/Cursor session scanning, command execution
-docs/       Design specs and implementation plans for every feature
-*.sh        Local run, agent install, and deploy scripts (see Deployment above)
+scripts/    audit-deps.py — dependency audit against OSV and PyPI
+docs/       Overview (PDF + Markdown), design specs and implementation plans
+*.sh        Run, agent install, deploy, generate-secrets and relock scripts
 ```
+
+## Limitations
+
+- The agent is macOS-only (launchd service, macOS chat-history paths).
+- Timestamps are displayed in `Europe/Berlin` time; this is currently hard-coded.
+- Updates arrive per poll cycle (default 60 s idle, 10 s for 5 minutes after you
+  use the app), not as a live stream.
+- Single user, single shared key. See [`SECURITY.md`](SECURITY.md) for the full
+  list of known security limitations.
 
 ## Dependencies
 

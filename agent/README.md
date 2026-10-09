@@ -1,4 +1,4 @@
-# AI Remote Chat Viewer — Local Agent
+# AI Remote — Local Agent
 
 ## Setup
 

@@ -134,6 +134,8 @@ AI Remote has a deliberately small threat model and layers several independent c
 - **Dual allow-list:** `AI_REMOTE_ALLOWED_PROJECTS` is set and checked independently on both sides. Empty means remote execution is off.
 - **Enforced permission profiles:** missing, empty, unparseable or wrong-dialect profiles make the job fail before the CLI runs.
 - **Sanitised rendering:** chat content is rendered from Markdown through an HTML allow-list sanitiser (`bleach`).
+- **Sessions tied to the key:** cookies carry a fingerprint of `API_KEY`; rotating a key logs everyone out, `/logout` ends the current session. Deploy scripts always ship `SESSION_COOKIE_HTTPS_ONLY=true`.
+- **Hash-pinned dependencies:** SHA-256-locked, installed with `--require-hashes`, 7-day release cooldown, `scripts/audit-deps.py` for OSV/PyPI checks.
 - **Quiet by default:** `/docs` and `/openapi.json` are off unless `ENABLE_API_DOCS=true`.
 - **Audited pre-release:** a pre-release audit found 0 Critical and 3 High issues, all in the remote-execution chain. All three are fixed, along with several Medium and Low findings.
 

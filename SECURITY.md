@@ -27,6 +27,15 @@ data. Read this whole file before you expose the backend to the internet.
   than accepted as if it constrained anything. See `agent/README.md`.
 - **A kill switch and an audit log.** `/settings/pause-remote-commands` stops all
   remote execution; `/jobs` lists every job ever queued with its result.
+- **Sessions tied to the key.** The session cookie is signed, `SameSite=Lax`, `Secure` in
+  production, and carries an HMAC fingerprint of `API_KEY`: rotating `API_KEY` or
+  `SECRET_KEY` invalidates every session, and `/logout` ends the current one.
+- **Secure cookies in production.** Both deploy scripts always ship
+  `SESSION_COOKIE_HTTPS_ONLY=true`, even though `run.sh` writes `false` into the local `.env`
+  for `http://localhost` testing.
+- **Hash-pinned dependencies.** Lockfiles with SHA-256 hashes, installed with
+  `--require-hashes`; releases younger than 7 days are skipped when locking, and
+  `scripts/audit-deps.py` checks the pins against OSV (vulnerabilities, reported malware).
 - **No multi-tenant isolation.** There is one user. Every authenticated session sees
   every synced chat.
 - **Loopback by default.** `docker-compose.yml` binds `127.0.0.1`. Exposing the

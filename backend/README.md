@@ -1,4 +1,4 @@
-# AI Remote Chat Viewer — Backend
+# AI Remote — Backend
 
 ## Local development
 
@@ -13,7 +13,7 @@ Visit http://localhost:8000/login and log in with `dev-key-0123456789-0123456789
 
 Both secrets must be at least 32 characters or the app refuses to start — the values
 above are exactly that length and are for local development only. Generate real ones
-with `openssl rand -hex 32`.
+with `./generate-secrets.sh` (from the repo root).
 
 ## Environment variables
 
@@ -21,10 +21,14 @@ with `openssl rand -hex 32`.
   `Authorization: Bearer <API_KEY>`, the browser sends it once via the `/login` form and gets a
   signed session cookie back. The app fails fast at startup if this is unset or shorter than 32
   characters. It is the only credential gating remote command execution — generate it with
-  `openssl rand -hex 32`.
+  `./generate-secrets.sh`. Session cookies carry a fingerprint of it, so changing it logs
+  everyone out.
 - `SECRET_KEY` — cookie-signing secret for the browser session (`starlette.SessionMiddleware`,
   **min 32 characters**). Same fail-fast behavior as `API_KEY`. Rotating it invalidates every
   existing session cookie.
+- Poll intervals (`AI_REMOTE_INTERVAL_SECONDS`, `AI_REMOTE_ACTIVE_INTERVAL_SECONDS`,
+  `ACTIVE_INTERVAL_DURATION_MIN`) are defaults; the first two can be overridden at runtime on
+  the Settings page (stored in the database). The full variable list is in the root README.
 - `TRUSTED_PROXY_HOPS` / `TRUSTED_PROXIES` — opt-in, set together, for per-client login
   throttling behind a reverse proxy. Default (`0` / empty) ignores `X-Forwarded-For`
   entirely. See `example.env` and `SECURITY.md`.
@@ -36,7 +40,7 @@ with `openssl rand -hex 32`.
   TLS). Set to `false` only for local `http://` testing — `run.sh` sets this automatically.
 - `LOCAL_HOME_DIR` — the Mac's home directory; `~/` and `~` in the chat-list path filter expand
   to this (default `/Users/yourname`).
-- `CHAT_HISTORY_PAGE_SIZE` — how many additional messages "Mehr laden" loads per click on a
+- `CHAT_HISTORY_PAGE_SIZE` — how many additional messages "Load more" loads per click on a
   chat's detail page (default `10`).
 
 ## Tests
@@ -46,8 +50,9 @@ with `openssl rand -hex 32`.
 ## PWA install
 
 Visiting the site on iPhone Safari and choosing "Add to Home Screen" installs it as a standalone
-app using `static/manifest.json`. No custom icon is configured for v1 — Safari falls back to a
-generic icon; add an `icons` array to the manifest later if desired.
+app using `static/manifest.json`; the icons live in `static/icons/` (SVG sources plus the
+rendered PNGs: Apple touch icon, 192/512 px, maskable). After changing the icon, remove the old
+Home Screen entry and add it again — iOS caches it.
 
 ## Deployment (Plesk Docker, example subdomain `your-domain.example.com`)
 
@@ -56,19 +61,20 @@ generic icon; add an `icons` array to the manifest later if desired.
    - Port mapping: container `8000` → host port of your choice.
    - Volume: host `./data` → container `/data` (persists the SQLite file across
      container recreation/updates).
-   - Environment: `API_KEY`, `SECRET_KEY` (generate both with `openssl rand -hex 32`).
+   - Environment: `API_KEY`, `SECRET_KEY` (generate both with `./generate-secrets.sh`), and
+     `SESSION_COOKIE_HTTPS_ONLY=true`.
 3. Bind your subdomain (e.g. `your-domain.example.com`) to the container's host port
    and enable Plesk's Let's Encrypt SSL for it.
 
 For local development and testing (not production), see the repo-root `run.sh`
-(Task 16) instead — it drives `docker-compose.yml` directly.
+instead — it drives `docker-compose.yml` directly.
 
 ## Remote commands: allow-list, kill switch, audit log
 
 - `AI_REMOTE_ALLOWED_PROJECTS` (see `example.env`) controls which projects the
   chat detail page's composer and the `/projects/new` screen will offer at all —
   set it here AND in the agent's own `.env` (two independently-configured copies).
-- The list page's "Remote-Befehle pausieren" toggle stops the agent from ever
+- The pause button in the header (and on the Settings page) stops the agent from ever
   receiving new `resume_message`/`new_session` jobs (they stay `pending`); `fetch_full`
   keeps working while paused.
 - `/jobs` shows every job ever created — type, target, prompt, status, result — as
