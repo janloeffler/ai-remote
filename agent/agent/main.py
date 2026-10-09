@@ -3,21 +3,43 @@ import time
 
 import httpx
 
-from . import ai_tools, claude_code_source, cursor_source, executor, images, jobs, state, uploader
+from . import ai_tools, claude_code_source, cursor_source, executor, handshake, images, jobs, search, seal, state, uploader
 from .config import Config, load_config
 
 
-def _upload_images(config: Config, client: httpx.Client, session_messages: dict[str, list[dict]]) -> None:
+def _upload_images(config: Config, client: httpx.Client, session_messages: dict[str, list[dict]], keys=None) -> None:
     # Images are a nicety: whatever goes wrong here must not break syncing or a job.
     try:
-        images.upload_pasted_images(config, client, session_messages)
+        images.upload_pasted_images(config, client, session_messages, keys)
     except Exception as exc:
         print(f"image upload failed: {exc}", file=sys.stderr)
+
+
+def _execute_job(job: dict, config: Config, client: httpx.Client, keys) -> dict:
+    if job["type"] == "fetch_full":
+        return executor.execute_fetch_full(job, config.enabled_tools)
+    if job["type"] == "resume_message":
+        if keys is not None:
+            job = seal.open_job_prompt(job, keys)
+        return executor.execute_resume_message(job, config.allowed_projects, config.enabled_tools)
+    if job["type"] == "new_session":
+        if keys is not None:
+            job = seal.open_job_prompt(job, keys)
+        return executor.execute_new_session(job, config.allowed_projects, config.enabled_tools)
+    if job["type"] == "fetch_image" and config.image_upload_enabled:
+        return images.execute_fetch_image(job, config, client, keys)
+    if job["type"] == "search":
+        return search.execute_search(job, keys, config.enabled_tools)
+    return {"status": "failed", "result_text": f"job type {job['type']} not supported in this version"}
 
 
 def run_cycle(config: Config, client: httpx.Client) -> int | None:
     if not config.enabled_tools:
         print(ai_tools.NONE_ENABLED_MESSAGE, file=sys.stderr)
+        return None
+
+    proceed, keys = handshake.perform(config, client)
+    if not proceed:
         return None
 
     claude_sessions = (
@@ -32,12 +54,13 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
 
     all_sessions = claude_sessions + changed_cursor_sessions
     deltas = state.compute_deltas(all_sessions, synced)
-    if uploader.push_sync(config.backend_url, config.api_key, deltas, client=client):
+    outgoing = deltas if keys is None else [seal.seal_session(s, keys) for s in deltas]
+    if uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client):
         for s in deltas:
             synced[s["id"]] = s["last_updated_at"]
         state.save_synced_ids(synced, config.state_path)
         if config.image_upload_enabled:
-            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in deltas})
+            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in deltas}, keys)
 
     next_interval = None
     try:
@@ -50,28 +73,31 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
 
     for job in pending_jobs:
         try:
-            if job["type"] == "fetch_full":
-                result = executor.execute_fetch_full(job, config.enabled_tools)
-            elif job["type"] == "resume_message":
-                result = executor.execute_resume_message(job, config.allowed_projects, config.enabled_tools)
-            elif job["type"] == "new_session":
-                result = executor.execute_new_session(job, config.allowed_projects, config.enabled_tools)
-            elif job["type"] == "fetch_image" and config.image_upload_enabled:
-                result = images.execute_fetch_image(job, config, client)
-            else:
-                result = {"status": "failed", "result_text": f"job type {job['type']} not supported in this version"}
+            plain_messages = None
+            try:
+                result = _execute_job(job, config, client, keys)
+            except seal.PromptError as exc:
+                result = {"status": "failed", "result_text": str(exc)}
+            report_messages = result.get("messages")
+            result_text = result.get("result_text", "")
+            if keys is not None:
+                plain_messages = report_messages
+                if report_messages:
+                    report_messages = seal.seal_messages(job["target"], report_messages, keys)
+                result_text = seal.seal_result_text(job["id"], result_text, keys)
             jobs.report_job_result(
                 config.backend_url,
                 config.api_key,
                 job["id"],
                 result["status"],
                 client,
-                result.get("result_text", ""),
-                result.get("messages"),
+                result_text,
+                report_messages,
                 is_complete=result.get("is_complete", False),
             )
             if job["type"] == "fetch_full" and result["status"] == "done" and config.image_upload_enabled:
-                _upload_images(config, client, {job["target"]: result.get("messages") or []})
+                uploads = plain_messages if keys is not None else result.get("messages")
+                _upload_images(config, client, {job["target"]: uploads or []}, keys)
         except Exception as exc:
             print(f"job {job.get('id')} failed: {exc}", file=sys.stderr)
             continue

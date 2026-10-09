@@ -19,7 +19,7 @@ from pathlib import Path
 
 import httpx
 
-from . import claude_code_source, cursor_source
+from . import claude_code_source, cursor_source, e2e, render_core
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADS_PER_CYCLE = 10
@@ -71,7 +71,11 @@ def read_image(path: str, allowed_roots: list[Path] | None = None) -> bytes | No
     return data if _is_image(data) else None
 
 
-def _post_image(base_url: str, api_key: str, session_id: str, path: str, data: bytes, client: httpx.Client):
+def _post_image(
+    base_url: str, api_key: str, session_id: str, path: str, data: bytes, client: httpx.Client, keys=None
+):
+    if keys is not None:
+        data = e2e.encrypt_bytes(keys, data, e2e.aad_image(session_id, render_core.path_key(session_id, path)))
     return client.post(
         f"{base_url}/sync/image",
         json={"session_id": session_id, "path": path, "data_b64": base64.b64encode(data).decode("ascii")},
@@ -93,7 +97,9 @@ def _save_state(path: Path, uploaded: set[str]) -> None:
     path.write_text(json.dumps(sorted(uploaded)[-_STATE_KEEP:]))
 
 
-def upload_pasted_images(config, client: httpx.Client, session_messages: dict[str, list[dict]]) -> None:
+def upload_pasted_images(
+    config, client: httpx.Client, session_messages: dict[str, list[dict]], keys: "e2e.Keys | None" = None
+) -> None:
     """Uploads pasted images of the given sessions that were not uploaded before.
 
     Remembered locally once sent, so an image the server has since expired is not pushed
@@ -114,7 +120,7 @@ def upload_pasted_images(config, client: httpx.Client, session_messages: dict[st
             if data is None:
                 continue  # gone (temp files get cleaned) or not an image — try again never
             try:
-                response = _post_image(config.backend_url, config.api_key, session_id, path, data, client)
+                response = _post_image(config.backend_url, config.api_key, session_id, path, data, client, keys)
             except httpx.HTTPError as exc:
                 print(f"image upload failed: {exc}", file=sys.stderr)
                 budget = 0
@@ -137,7 +143,7 @@ def upload_pasted_images(config, client: httpx.Client, session_messages: dict[st
         _save_state(state_path, uploaded)
 
 
-def execute_fetch_image(job: dict, config, client: httpx.Client) -> dict:
+def execute_fetch_image(job: dict, config, client: httpx.Client, keys: "e2e.Keys | None" = None) -> dict:
     session_id = job["target"]
     try:
         payload = json.loads(job.get("payload") or "{}")
@@ -168,7 +174,7 @@ def execute_fetch_image(job: dict, config, client: httpx.Client) -> dict:
         return {"status": "failed", "result_text": "image not readable, too large or not allowed"}
 
     try:
-        response = _post_image(config.backend_url, config.api_key, session_id, path, data, client)
+        response = _post_image(config.backend_url, config.api_key, session_id, path, data, client, keys)
     except httpx.HTTPError as exc:
         return {"status": "failed", "result_text": f"upload failed: {exc}"}
     if response.status_code >= 400:
