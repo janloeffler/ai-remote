@@ -73,6 +73,7 @@ templates.env.filters["chat_markdown"] = _chat_markdown
 templates.env.globals["image_upload_enabled"] = settings.IMAGE_UPLOAD_ENABLED
 # Functions, not values: they must follow a settings change at call time.
 templates.env.globals["e2e_enabled"] = lambda: settings.E2E_ENCRYPTION
+templates.env.globals["image_upload_active"] = lambda: settings.IMAGE_UPLOAD_ENABLED
 
 
 def _e2e_config() -> dict:

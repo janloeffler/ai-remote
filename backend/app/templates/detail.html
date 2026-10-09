@@ -23,7 +23,7 @@
   {% endfor %}
 </div>
 {% endif %}
-{% if e2e_enabled() and image_upload_enabled %}
+{% if e2e_enabled() and image_upload_active() %}
 <script type="application/json" id="image-keys-data">{{ (image_keys or []) | list | sort | tojson }}</script>
 {% endif %}
 {% if not session.full_content_synced %}
