@@ -77,3 +77,20 @@ ACTIVE_INTERVAL_RANGE = (5, 300)
 # Tool switches. None enabled is not fatal: the UI shows an error instead, so the
 # operator sees what to fix rather than a container that restart-loops.
 ENABLED_TOOLS, DEFAULT_TOOL = ai_tools.load()
+
+# Pasted/linked chat images the agent may upload so the UI can show them inline. Off by
+# default: it moves files off the user's machine onto the server.
+def _bool_env(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw == "":
+        return default
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    raise RuntimeError(f"{name} must be true or false, got {os.environ.get(name)!r}")
+
+
+IMAGE_UPLOAD_ENABLED = _bool_env("IMAGE_UPLOAD_ENABLED", False)
+IMAGE_RETENTION_DAYS = _int_env("IMAGE_RETENTION_DAYS", 3, minimum=1)
+IMAGE_MAX_BYTES = 5 * 1024 * 1024

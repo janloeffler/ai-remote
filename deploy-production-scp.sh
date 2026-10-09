@@ -79,6 +79,8 @@ services:
       - CLAUDE_CODE_ENABLED=\${CLAUDE_CODE_ENABLED:-true}
       - CURSOR_ENABLED=\${CURSOR_ENABLED:-true}
       - DEFAULT_AI=\${DEFAULT_AI:-claude}
+      - IMAGE_UPLOAD_ENABLED=\${IMAGE_UPLOAD_ENABLED:-false}
+      - IMAGE_RETENTION_DAYS=\${IMAGE_RETENTION_DAYS:-3}
     restart: unless-stopped
 COMPOSE
 scp /tmp/ai-remote-compose.prod.yml "${SSH_HOST}:${SSH_PATH}/docker-compose.yml"

@@ -6,7 +6,7 @@
 <h1>{{ session.title }}</h1>
 <p class="session-meta"><code>{{ session.project_path }}</code> — <span class="tool-badge tool-badge-{{ session.tool }}">{{ session.tool }}</span></p>
 {% if session.loaded_message_count == 0 %}
-<div>{{ session.last_message_preview | markdown | safe }}</div>
+<div>{{ session.last_message_preview | chat_markdown | safe }}</div>
 {% else %}
 <div class="messages">
   {% for m in messages %}
@@ -15,7 +15,7 @@
       <time>{{ m.timestamp | localdt }}</time>
       <button class="copy-button" type="button" aria-label="{{ t('detail.copy') }}">📋</button>
     </div>
-    <div class="message-content">{{ m.content | markdown | safe }}</div>
+    <div class="message-content">{{ m.content | chat_markdown | safe }}</div>
   </div>
   {% endfor %}
 </div>

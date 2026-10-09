@@ -562,3 +562,62 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 });
+
+// Chat images: a button stands in for an image the server doesn't hold yet. A click queues
+// a job, the agent uploads the file, and we poll until the image can replace the button.
+document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest(".image-fetch");
+    if (!button || button.getAttribute("aria-busy") === "true") return;
+    const sessionId = button.dataset.sessionId;
+    const label = button.querySelector(".image-fetch-label");
+    const original = label.textContent;
+    const fail = (message) => {
+      button.removeAttribute("aria-busy");
+      label.textContent = `${original} — ${message}`;
+    };
+    const show = (url) => {
+      const link = document.createElement("a");
+      link.className = "chat-image";
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = original;
+      link.appendChild(img);
+      button.replaceWith(link);
+    };
+
+    button.setAttribute("aria-busy", "true");
+    try {
+      const res = await fetch(`/chats/${encodeURIComponent(sessionId)}/fetch-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: button.dataset.path }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return fail(errorText(data.detail) || t("js.image_failed"));
+      if (data.available) return show(data.url);
+
+      label.textContent = t("js.image_waiting", { s: data.eta_seconds });
+      const poll = async () => {
+        try {
+          const statusRes = await fetch(
+            `/chats/${encodeURIComponent(sessionId)}/status?job_id=${encodeURIComponent(data.job_id)}`
+          );
+          if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
+          const job = await statusRes.json();
+          if (job.status === "done") return show(data.url);
+          if (job.status === "failed") return fail(t("js.image_failed"));
+          setTimeout(poll, 2000);
+        } catch (error) {
+          fail(t("js.conn_lost"));
+        }
+      };
+      poll();
+    } catch (error) {
+      fail(t("js.conn_lost"));
+    }
+  });
+});

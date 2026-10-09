@@ -1,20 +1,30 @@
+import base64
+import binascii
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from jinja2 import pass_context
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ai_tools, allowlist, db, i18n, rate_limit, settings
+from . import ai_tools, allowlist, db, i18n, images, rate_limit, settings
 from .auth import require_api_key, require_session, secrets_match, session_binding
 from .datetime_filter import format_datetime
-from .markdown_filter import render_markdown
-from .models import CommandRequest, JobCompleteRequest, NewSessionCommandRequest, SyncIndexRequest
+from .markdown_filter import ImageContext, render_markdown
+from .models import (
+    CommandRequest,
+    FetchImageRequest,
+    ImageUploadRequest,
+    JobCompleteRequest,
+    NewSessionCommandRequest,
+    SyncIndexRequest,
+)
 
 APP_DIR = Path(__file__).parent
 TOOL_LABELS = {ai_tools.CLAUDE_CODE: "Claude Code", ai_tools.CURSOR: "Cursor"}
@@ -45,6 +55,19 @@ async def _resolve_language(request: Request, call_next):
 
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 templates.env.filters["markdown"] = render_markdown
+
+
+@pass_context
+def _chat_markdown(context, text: str) -> str:
+    """Markdown for a chat message; image references become inline images or fetch buttons."""
+    if not settings.IMAGE_UPLOAD_ENABLED or context.get("session") is None:
+        return render_markdown(text)
+    ctx = ImageContext(session_id=context["session"]["id"], available=context.get("image_keys") or set())
+    return render_markdown(text, ctx)
+
+
+templates.env.filters["chat_markdown"] = _chat_markdown
+templates.env.globals["image_upload_enabled"] = settings.IMAGE_UPLOAD_ENABLED
 
 
 @pass_context
@@ -82,12 +105,26 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 def on_startup() -> None:
     conn = db.get_connection(os.environ.get("DATABASE_PATH", "app.db"))
     db.init_db(conn)
+    images.cleanup_expired(conn)
     conn.close()
+
+
+_last_image_cleanup = 0.0
+
+
+def _cleanup_images_hourly(conn) -> None:
+    global _last_image_cleanup
+    now = time.monotonic()
+    if now - _last_image_cleanup < 3600:
+        return
+    _last_image_cleanup = now
+    images.cleanup_expired(conn)
 
 
 @app.get("/jobs/pending", dependencies=[Depends(require_api_key)])
 def jobs_pending(conn=Depends(db.get_db_dependency)):
     db.fail_stale_jobs(conn)
+    _cleanup_images_hourly(conn)
     jobs = db.claim_pending_jobs(conn)
     db.record_agent_contact(conn)
     interval = db.current_poll_interval_seconds(
@@ -164,6 +201,67 @@ def sync_index(body: SyncIndexRequest, conn=Depends(db.get_db_dependency)):
         db.apply_recent_messages(conn, session.id, [m.model_dump() for m in session.recent_messages])
     db.record_agent_contact(conn)
     return {"received": received}
+
+
+@app.post("/sync/image", dependencies=[Depends(require_api_key)])
+def sync_image(body: ImageUploadRequest, conn=Depends(db.get_db_dependency)):
+    if not settings.IMAGE_UPLOAD_ENABLED:
+        raise HTTPException(status_code=403, detail="image upload is disabled")
+    if _get_visible_session(conn, body.session_id) is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    try:
+        data = base64.b64decode(body.data_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="invalid base64")
+    try:
+        key, _ = images.store(conn, body.session_id, body.path, data)
+    except ValueError as exc:
+        status = 413 if str(exc) == "too large" else 415
+        raise HTTPException(status_code=status, detail=str(exc))
+    images.cleanup_expired(conn)
+    return {"key": key}
+
+
+@app.get("/chats/{session_id}/images/{key}", dependencies=[Depends(require_session)])
+def chat_image(session_id: str, key: str, conn=Depends(db.get_db_dependency)):
+    if not images.KEY_RE.fullmatch(key) or _get_visible_session(conn, session_id) is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    row = db.get_image(conn, session_id, key)
+    path = images.file_path(key, row["mime"]) if row else None
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="image not found")
+    return FileResponse(
+        path,
+        media_type=row["mime"],
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+@app.post("/chats/{session_id}/fetch-image", dependencies=[Depends(require_session)])
+def fetch_image(session_id: str, body: FetchImageRequest, conn=Depends(db.get_db_dependency)):
+    if not settings.IMAGE_UPLOAD_ENABLED:
+        raise HTTPException(status_code=403, detail="image upload is disabled")
+    if _get_visible_session(conn, session_id) is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    # Only paths the chat itself mentions: the path is handed to the agent, which reads a
+    # file from it, so it must not be a way to name arbitrary files (cf. SEC-005).
+    path = body.path
+    if not images.is_image_path(path) or not any(path in m["content"] for m in db.get_messages(conn, session_id)):
+        raise HTTPException(status_code=400, detail="path not found in chat")
+    key = images.path_key(session_id, path)
+    url = f"/chats/{session_id}/images/{key}"
+    if db.get_image(conn, session_id, key):
+        return {"available": True, "url": url}
+    job_id = db.create_job(conn, "fetch_image", session_id, payload=json.dumps({"path": path}))
+    interval = db.current_poll_interval_seconds(
+        conn, settings.AI_REMOTE_INTERVAL_SECONDS, settings.AI_REMOTE_ACTIVE_INTERVAL_SECONDS
+    )
+    eta_seconds = _compute_eta_seconds(db.get_last_agent_contact(conn), interval)
+    return {"available": False, "url": url, "job_id": job_id, "eta_seconds": eta_seconds}
 
 
 @app.get("/login")
@@ -382,6 +480,7 @@ def chat_detail(request: Request, session_id: str, conn=Depends(db.get_db_depend
         {
             "session": session,
             "messages": messages,
+            "image_keys": db.get_image_keys(conn, session_id) if settings.IMAGE_UPLOAD_ENABLED else set(),
             "command_allowed": allowlist.is_allowed(session["project_path"]),
             "remote_commands_paused": db.get_remote_commands_paused(conn),
             "poll_mode": poll_mode,

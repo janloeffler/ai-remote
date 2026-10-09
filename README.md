@@ -99,6 +99,8 @@ via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
 | `AI_REMOTE_ALLOWED_PROJECTS` | *(empty = disabled)* | backend, agent | Comma-separated absolute project paths where remote commands may run. Must be set identically on both sides — two independently-checked copies, not synced automatically. |
 | `CLAUDE_CODE_ENABLED` | `true` | backend, agent | `false` hides Claude Code everywhere (list, filter, new session) and stops the agent from polling it. |
 | `CURSOR_ENABLED` | `true` | backend, agent | Same for Cursor. |
+| `IMAGE_UPLOAD_ENABLED` | `false` | backend + agent | Show chat images inline: the agent uploads pasted images automatically, linked image files (inside an allow-listed project) on click. Moves files to the server — opt in. Max 5 MB, PNG/JPEG/GIF/WebP. |
+| `IMAGE_RETENTION_DAYS` | `3` | backend | Uploaded images are deleted from the server after this many days. |
 | `DEFAULT_AI` | `claude` | backend | `claude` or `cursor`: preselected tool for new sessions. With only one tool enabled that tool is used regardless. If both tools are disabled the UI shows an error and the agent idles. |
 | `TRUSTED_PROXY_HOPS` | `0` | backend | Number of reverse-proxy hops to trust when reading `X-Forwarded-For` for login-throttle bucketing. Must be set together with `TRUSTED_PROXIES` — the backend fails fast at startup if only one is set. |
 | `TRUSTED_PROXIES` | *(empty)* | backend | Comma-separated peer addresses of your trusted reverse proxy. Required if `TRUSTED_PROXY_HOPS > 0`. |

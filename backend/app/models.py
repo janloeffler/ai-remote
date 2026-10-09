@@ -48,3 +48,18 @@ class NewSessionCommandRequest(BaseModel):
     project_path: str
     tool: Literal["claude-code", "cursor"]
     prompt: str = Field(max_length=PROMPT_MAX_LENGTH)
+
+
+# base64 of IMAGE_MAX_BYTES (5 MiB) is ~7.0M characters; pydantic rejects anything bigger
+# before it is decoded.
+IMAGE_B64_MAX_LENGTH = 7_200_000
+
+
+class ImageUploadRequest(BaseModel):
+    session_id: str
+    path: str = Field(max_length=1024)
+    data_b64: str = Field(max_length=IMAGE_B64_MAX_LENGTH)
+
+
+class FetchImageRequest(BaseModel):
+    path: str = Field(max_length=1024)

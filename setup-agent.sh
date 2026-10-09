@@ -106,6 +106,7 @@ ALLOWED_PROJECTS_XML="$(xml_escape "${AI_REMOTE_ALLOWED_PROJECTS:-}")"
 CLAUDE_CODE_ENABLED_XML="$(xml_escape "${CLAUDE_CODE_ENABLED:-true}")"
 CURSOR_ENABLED_XML="$(xml_escape "${CURSOR_ENABLED:-true}")"
 DEFAULT_AI_XML="$(xml_escape "${DEFAULT_AI:-claude}")"
+IMAGE_UPLOAD_ENABLED_XML="$(xml_escape "${IMAGE_UPLOAD_ENABLED:-false}")"
 
 echo -e "${BLUE}==> Writing ${PLIST_DEST}${NC}"
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
@@ -151,6 +152,8 @@ cat > "$PLIST_DEST" <<PLIST
         <string>${CURSOR_ENABLED_XML}</string>
         <key>DEFAULT_AI</key>
         <string>${DEFAULT_AI_XML}</string>
+        <key>IMAGE_UPLOAD_ENABLED</key>
+        <string>${IMAGE_UPLOAD_ENABLED_XML}</string>
         <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:${HOME}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>

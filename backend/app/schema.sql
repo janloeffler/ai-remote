@@ -30,7 +30,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('fetch_full', 'resume_message', 'new_session')),
+    type TEXT NOT NULL CHECK(type IN ('fetch_full', 'resume_message', 'new_session', 'fetch_image')),
     target TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'failed')),
@@ -53,3 +53,13 @@ CREATE TABLE IF NOT EXISTS settings (
     poll_interval_active_seconds INTEGER
 );
 INSERT OR IGNORE INTO settings (id, remote_commands_paused) VALUES (1, 0);
+
+CREATE TABLE IF NOT EXISTS images (
+    session_id TEXT NOT NULL,
+    path_key TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, path_key)
+);

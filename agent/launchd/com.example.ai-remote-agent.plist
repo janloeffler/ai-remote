@@ -24,6 +24,8 @@
         <string>true</string>
         <key>DEFAULT_AI</key>
         <string>claude</string>
+        <key>IMAGE_UPLOAD_ENABLED</key>
+        <string>false</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

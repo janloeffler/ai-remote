@@ -36,6 +36,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_add_loaded_message_count(conn)
     _migrate_add_active_until(conn)
     _migrate_add_poll_interval_overrides(conn)
+    _migrate_jobs_allow_fetch_image(conn)
 
 
 def _migrate_add_loaded_message_count(conn: sqlite3.Connection) -> None:
@@ -61,6 +62,18 @@ def _migrate_add_poll_interval_overrides(conn: sqlite3.Connection) -> None:
     for name in ("poll_interval_default_seconds", "poll_interval_active_seconds"):
         if name not in columns:
             conn.execute(f"ALTER TABLE settings ADD COLUMN {name} INTEGER")
+    conn.commit()
+
+
+def _migrate_jobs_allow_fetch_image(conn: sqlite3.Connection) -> None:
+    """SQLite can't alter a CHECK constraint, so an older jobs table is rebuilt."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").fetchone()
+    if row is None or "fetch_image" in row["sql"]:
+        return
+    conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+    conn.executescript(SCHEMA_PATH.read_text())
+    conn.execute("INSERT INTO jobs SELECT * FROM jobs_old")
+    conn.execute("DROP TABLE jobs_old")
     conn.commit()
 
 
@@ -291,7 +304,7 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-_JOB_TIMEOUTS_SECONDS = {"fetch_full": 300, "resume_message": 1800, "new_session": 1800}
+_JOB_TIMEOUTS_SECONDS = {"fetch_full": 300, "fetch_image": 300, "resume_message": 1800, "new_session": 1800}
 
 
 def fail_stale_jobs(conn: sqlite3.Connection) -> None:
@@ -375,3 +388,35 @@ def set_remote_commands_paused(conn: sqlite3.Connection, paused: bool) -> None:
 def get_all_jobs(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
     return [dict(row) for row in rows]
+
+
+def save_image(
+    conn: sqlite3.Connection, session_id: str, path_key: str, source_path: str, mime: str, size: int
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO images (session_id, path_key, source_path, mime, size, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, path_key, source_path, mime, size, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def get_image(conn: sqlite3.Connection, session_id: str, path_key: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM images WHERE session_id = ? AND path_key = ?", (session_id, path_key)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_image_keys(conn: sqlite3.Connection, session_id: str) -> set[str]:
+    rows = conn.execute("SELECT path_key FROM images WHERE session_id = ?", (session_id,)).fetchall()
+    return {row["path_key"] for row in rows}
+
+
+def pop_expired_images(conn: sqlite3.Connection, retention_days: int) -> list[dict]:
+    """Deletes image rows older than the retention and returns them so files can go too."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM images WHERE created_at < ?", (cutoff,)).fetchall()]
+    conn.execute("DELETE FROM images WHERE created_at < ?", (cutoff,))
+    conn.commit()
+    return rows

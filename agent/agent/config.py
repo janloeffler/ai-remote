@@ -13,6 +13,7 @@ class Config:
     interval_seconds: int = 60
     allowed_projects: list[str] = field(default_factory=list)
     enabled_tools: tuple[str, ...] = ai_tools.ALL_TOOLS
+    image_upload_enabled: bool = False
 
 
 def load_config() -> Config:
@@ -28,4 +29,5 @@ def load_config() -> Config:
             p.strip() for p in (os.environ.get("AI_REMOTE_ALLOWED_PROJECTS") or "").split(",") if p.strip()
         ],
         enabled_tools=enabled_tools,
+        image_upload_enabled=(os.environ.get("IMAGE_UPLOAD_ENABLED") or "").strip().lower() in ("true", "1", "yes", "on"),
     )
