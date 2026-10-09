@@ -1,6 +1,7 @@
 """E2E `search` job: scans local plaintext, returns ids of matching sessions."""
 
 import json
+import sys
 
 from . import ai_tools, claude_code_source, cursor_source, e2e
 
@@ -46,12 +47,15 @@ def execute_search(job: dict, keys: "e2e.Keys | None", enabled_tools=ai_tools.AL
     hits = []
     for session, tool in sessions:
         raw_id = session["id"].split(":", 1)[-1]
-        if tool == "claude-code":
-            messages = claude_code_source.get_full_messages(raw_id)
-        else:
-            messages = cursor_source.get_full_messages(raw_id)
-        if _matches(needle, session, messages):
-            hits.append(session)
+        try:
+            if tool == "claude-code":
+                messages = claude_code_source.get_full_messages(raw_id)
+            else:
+                messages = cursor_source.get_full_messages(raw_id)
+            if _matches(needle, session, messages):
+                hits.append(session)
+        except Exception as exc:
+            print(f"search: session {session.get('id')} skipped ({type(exc).__name__})", file=sys.stderr)
     hits.sort(key=lambda s: s.get("last_updated_at") or "", reverse=True)
     ids = [s["id"] for s in hits[:MAX_RESULTS]]
     return {"status": "done", "result_text": json.dumps({"ids": ids}), "messages": [], "is_complete": False}

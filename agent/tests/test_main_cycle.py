@@ -13,7 +13,7 @@ def test_run_cycle_pushes_deltas_and_executes_pending_jobs(tmp_path, monkeypatch
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda sessions: None)
 
-    def fake_push_sync(base_url, api_key, sessions, client):
+    def fake_push_sync(base_url, api_key, sessions, client, **kw):
         calls.append(("push", sessions))
         return True
 
@@ -23,7 +23,7 @@ def test_run_cycle_pushes_deltas_and_executes_pending_jobs(tmp_path, monkeypatch
     def fake_execute_fetch_full(job, enabled_tools):
         return {"status": "done", "result_text": "", "messages": []}
 
-    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False):
+    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False, **kw):
         calls.append(("report", job_id, status))
 
     monkeypatch.setattr("agent.uploader.push_sync", fake_push_sync)
@@ -67,7 +67,7 @@ def test_run_cycle_enriches_only_changed_cursor_sessions(tmp_path, monkeypatch):
         enrich_calls.append(sessions)
 
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", fake_enrich)
-    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client: True)
+    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client, **kw: True)
     monkeypatch.setattr(
         "agent.jobs.fetch_pending_jobs", lambda base_url, api_key, client: {"jobs": [], "poll_interval_seconds": 60}
     )
@@ -95,7 +95,7 @@ def test_run_cycle_continues_after_job_failure(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda sessions: None)
 
-    def fake_push_sync(base_url, api_key, sessions, client):
+    def fake_push_sync(base_url, api_key, sessions, client, **kw):
         return True
 
     def fake_fetch_pending_jobs(base_url, api_key, client):
@@ -110,7 +110,7 @@ def test_run_cycle_continues_after_job_failure(tmp_path, monkeypatch):
     def fake_execute_fetch_full(job, enabled_tools):
         return {"status": "done", "result_text": "", "messages": []}
 
-    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False):
+    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False, **kw):
         calls.append(("report", job_id, status))
         # Raise exception on first call (job j1), succeed on second (job j2)
         if len([c for c in calls if c[0] == "report"]) == 1:
@@ -141,7 +141,7 @@ def test_run_cycle_dispatches_resume_message_and_new_session_jobs(tmp_path, monk
     monkeypatch.setattr("agent.claude_code_source.list_claude_code_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda sessions: None)
-    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client: True)
+    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client, **kw: True)
 
     def fake_fetch_pending_jobs(base_url, api_key, client):
         return {
@@ -160,7 +160,7 @@ def test_run_cycle_dispatches_resume_message_and_new_session_jobs(tmp_path, monk
         calls.append(("new_session", job["id"], allowed_projects))
         return {"status": "done", "result_text": "", "messages": []}
 
-    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False):
+    def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False, **kw):
         calls.append(("report", job_id, status))
 
     monkeypatch.setattr("agent.jobs.fetch_pending_jobs", fake_fetch_pending_jobs)
@@ -187,7 +187,7 @@ def test_run_cycle_returns_poll_interval_from_response(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.claude_code_source.list_claude_code_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda sessions: None)
-    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client: True)
+    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client, **kw: True)
     monkeypatch.setattr(
         "agent.jobs.fetch_pending_jobs",
         lambda base_url, api_key, client: {"jobs": [], "poll_interval_seconds": 10},
@@ -209,7 +209,7 @@ def test_run_cycle_returns_none_when_fetch_pending_jobs_fails(tmp_path, monkeypa
     monkeypatch.setattr("agent.claude_code_source.list_claude_code_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda sessions: None)
-    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client: True)
+    monkeypatch.setattr("agent.uploader.push_sync", lambda base_url, api_key, sessions, client, **kw: True)
 
     def raise_http_error(base_url, api_key, client):
         raise httpx_module.HTTPError("boom")

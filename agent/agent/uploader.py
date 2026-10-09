@@ -3,14 +3,20 @@ import sys
 import httpx
 
 
-def push_sync(base_url: str, api_key: str, sessions: list[dict], client: httpx.Client) -> bool:
+def mode_headers(api_key: str, e2e: bool) -> dict:
+    return {"Authorization": f"Bearer {api_key}", "X-AI-Remote-E2E": "1" if e2e else "0"}
+
+
+def push_sync(
+    base_url: str, api_key: str, sessions: list[dict], client: httpx.Client, *, e2e: bool = False
+) -> bool:
     if not sessions:
         return True
     try:
         response = client.post(
             f"{base_url}/sync/index",
             json={"sessions": sessions},
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers=mode_headers(api_key, e2e),
         )
         response.raise_for_status()
         return True

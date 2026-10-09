@@ -54,13 +54,23 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
 
     all_sessions = claude_sessions + changed_cursor_sessions
     deltas = state.compute_deltas(all_sessions, synced)
-    outgoing = deltas if keys is None else [seal.seal_session(s, keys) for s in deltas]
-    if uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client):
+    if keys is None:
+        outgoing, pushed = deltas, deltas
+    else:
+        outgoing, pushed = [], []
         for s in deltas:
+            try:
+                outgoing.append(seal.seal_session(s, keys, config.image_upload_enabled))
+                pushed.append(s)
+            except Exception as exc:
+                # Never log content: the exception text may quote it.
+                print(f"session {s.get('id')}: cannot seal ({type(exc).__name__})", file=sys.stderr)
+    if uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client, e2e=config.e2e):
+        for s in pushed:
             synced[s["id"]] = s["last_updated_at"]
         state.save_synced_ids(synced, config.state_path)
         if config.image_upload_enabled:
-            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in deltas}, keys)
+            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in pushed}, keys)
 
     next_interval = None
     try:
@@ -83,7 +93,16 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
             if keys is not None:
                 plain_messages = report_messages
                 if report_messages:
-                    report_messages = seal.seal_messages(job["target"], report_messages, keys)
+                    try:
+                        report_messages = seal.seal_messages(
+                            job["target"], report_messages, keys, config.image_upload_enabled
+                        )
+                    except Exception as exc:
+                        print(f"job {job.get('id')}: cannot seal ({type(exc).__name__})", file=sys.stderr)
+                        result = {"status": "failed", "result_text": "cannot render messages"}
+                        result_text = result["result_text"]
+                        report_messages = None
+                        plain_messages = None
                 result_text = seal.seal_result_text(job["id"], result_text, keys)
             jobs.report_job_result(
                 config.backend_url,
@@ -94,6 +113,7 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
                 result_text,
                 report_messages,
                 is_complete=result.get("is_complete", False),
+                e2e=config.e2e,
             )
             if job["type"] == "fetch_full" and result["status"] == "done" and config.image_upload_enabled:
                 uploads = plain_messages if keys is not None else result.get("messages")

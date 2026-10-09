@@ -19,7 +19,7 @@ from pathlib import Path
 
 import httpx
 
-from . import claude_code_source, cursor_source, e2e, render_core
+from . import claude_code_source, cursor_source, e2e, render_core, uploader
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADS_PER_CYCLE = 10
@@ -79,7 +79,7 @@ def _post_image(
     return client.post(
         f"{base_url}/sync/image",
         json={"session_id": session_id, "path": path, "data_b64": base64.b64encode(data).decode("ascii")},
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers=uploader.mode_headers(api_key, keys is not None),
         timeout=60,
     )
 

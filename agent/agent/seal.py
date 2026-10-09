@@ -10,28 +10,32 @@ from . import e2e
 from .render_core import ImageContext, render_markdown
 
 
-def seal_message(session_id: str, message: dict, keys: e2e.Keys) -> dict:
-    html = render_markdown(message["content"], ImageContext(session_id, available=set()))
+def _image_ctx(session_id: str, images: bool, **kw) -> ImageContext | None:
+    return ImageContext(session_id, **kw) if images else None
+
+
+def seal_message(session_id: str, message: dict, keys: e2e.Keys, images: bool = True) -> dict:
+    html = render_markdown(message["content"], _image_ctx(session_id, images, available=set()))
     sealed = dict(message)
     sealed["content"] = e2e.encrypt_text(keys, html, e2e.aad_message(session_id, message["idx"]))
     return sealed
 
 
-def seal_messages(session_id: str, messages: list[dict], keys: e2e.Keys) -> list[dict]:
-    return [seal_message(session_id, m, keys) for m in messages]
+def seal_messages(session_id: str, messages: list[dict], keys: e2e.Keys, images: bool = True) -> list[dict]:
+    return [seal_message(session_id, m, keys, images) for m in messages]
 
 
-def seal_session(session: dict, keys: e2e.Keys) -> dict:
+def seal_session(session: dict, keys: e2e.Keys, images: bool = True) -> dict:
     sid = session["id"]
     sealed = dict(session)
     if "title" in sealed:
         sealed["title"] = e2e.encrypt_text(keys, sealed["title"] or "", e2e.aad_title(sid))
     if "last_message_preview" in sealed:
         preview = sealed["last_message_preview"] or ""
-        body = json.dumps({"text": preview, "html": render_markdown(preview, ImageContext(sid))})
+        body = json.dumps({"text": preview, "html": render_markdown(preview, _image_ctx(sid, images))})
         sealed["last_message_preview"] = e2e.encrypt_text(keys, body, e2e.aad_preview(sid))
     if "recent_messages" in sealed:
-        sealed["recent_messages"] = seal_messages(sid, sealed["recent_messages"], keys)
+        sealed["recent_messages"] = seal_messages(sid, sealed["recent_messages"], keys, images)
     return sealed
 
 
