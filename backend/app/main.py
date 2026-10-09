@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import binascii
 import json
 import os
@@ -116,6 +117,23 @@ templates.env.globals["tool_label"] = lambda tool: TOOL_LABELS.get(tool, tool)
 templates.env.globals["js_strings"] = _js_strings
 templates.env.filters["localdt"] = _localdt
 templates.env.globals["build_timestamp"] = os.environ.get("BUILD_TIMESTAMP", "dev")
+
+
+def _compute_asset_version() -> str:
+    """URL-safe cache-busting token: BUILD_TIMESTAMP hashed when set, else a hash of static mtimes+sizes."""
+    stamp = os.environ.get("BUILD_TIMESTAMP", "").strip()
+    digest = hashlib.sha256()
+    if stamp and stamp not in ("dev", "unknown"):
+        digest.update(stamp.encode())
+    else:
+        static_dir = APP_DIR / "static"
+        for path in sorted(p for p in static_dir.rglob("*") if p.is_file()):
+            st = path.stat()
+            digest.update(f"{path.relative_to(static_dir)}:{st.st_mtime_ns}:{st.st_size}\n".encode())
+    return digest.hexdigest()[:12]
+
+
+templates.env.globals["asset_version"] = _compute_asset_version()
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 
@@ -165,6 +183,10 @@ def agent_e2e_params(body: E2EParamsRequest, conn=Depends(db.get_db_dependency))
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503, detail="wiping server data failed; the data epoch changed, retry the request"
+        )
     return e2e.handshake_payload(conn)
 
 
@@ -173,6 +195,8 @@ def _check_agent_mode(header: str | None) -> None:
         e2e.check_agent_mode(header, settings.E2E_ENCRYPTION)
     except e2e.ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/jobs/{job_id}/complete", dependencies=[Depends(require_api_key)])

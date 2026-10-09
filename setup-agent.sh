@@ -129,6 +129,7 @@ if [ "$E2E_ENABLED" = true ]; then
     EXISTING_E2E_KEY="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:AI_REMOTE_E2E_KEY" "$PLIST_DEST" 2>/dev/null || true)"
   fi
   RSTFLAG=()
+  STOPPED_FOR_ROTATION=false
   if [ "$ROTATE_PASSPHRASE" = true ]; then
     echo -e "${YELLOW}==> Rotating the E2E passphrase: the server cache and job history will be wiped and every browser must enter the new passphrase.${NC}"
     RSTFLAG=(--rotate)
@@ -136,6 +137,7 @@ if [ "$E2E_ENABLED" = true ]; then
     if is_loaded; then
       echo -e "${YELLOW}==> Stopping the installed agent before rotating${NC}"
       launchctl bootout "$SERVICE_TARGET" 2>/dev/null || true
+      STOPPED_FOR_ROTATION=true
       for _ in $(seq 1 20); do
         is_loaded || break
         sleep 0.1
@@ -148,13 +150,21 @@ if [ "$E2E_ENABLED" = true ]; then
       AI_REMOTE_BACKEND_URL="$BACKEND_URL" AI_REMOTE_API_KEY="$API_KEY" \
       AI_REMOTE_E2E_KEY="$EXISTING_E2E_KEY" \
       .venv/bin/python -m agent.e2e_setup ${RSTFLAG[@]+"${RSTFLAG[@]}"})"; then
-    echo -e "${RED}E2E setup failed; no service was installed or changed.${NC}"
+    if [ "$STOPPED_FOR_ROTATION" = true ]; then
+      echo -e "${RED}E2E setup failed. The agent was stopped for the rotation and is still stopped; fix the problem and re-run ./setup-agent.sh --rotate-passphrase, or re-run ./setup-agent.sh to start it with the current key.${NC}"
+    else
+      echo -e "${RED}E2E setup failed; no service was installed or changed.${NC}"
+    fi
     echo "The server must already run with E2E_ENCRYPTION=true (deploy it first), and API_KEY/backend URL must be correct."
     exit 1
   fi
   E2E_KEY="$(printf '%s' "$E2E_KEY" | tr -d '[:space:]')"
   if [ -z "$E2E_KEY" ]; then
-    echo -e "${RED}E2E setup returned no key; no service was installed or changed.${NC}"
+    if [ "$STOPPED_FOR_ROTATION" = true ]; then
+      echo -e "${RED}E2E setup returned no key. The agent was stopped for the rotation and is still stopped; re-run ./setup-agent.sh --rotate-passphrase, or re-run ./setup-agent.sh to start it with the current key.${NC}"
+    else
+      echo -e "${RED}E2E setup returned no key; no service was installed or changed.${NC}"
+    fi
     exit 1
   fi
   E2E_KEY_ENTRY="        <key>AI_REMOTE_E2E_KEY</key>

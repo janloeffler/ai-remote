@@ -53,6 +53,8 @@ def check_agent_mode(header: str | None, enabled: bool) -> None:
     if header is None:
         return
     value = header.strip()
+    if value not in ("0", "1"):
+        raise ValueError("invalid X-AI-Remote-E2E header")
     if enabled and value == "0":
         raise ConflictError("agent is in plaintext mode but the server is in E2E mode")
     if not enabled and value == "1":
@@ -138,6 +140,9 @@ def wipe_content(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA secure_delete = ON")
     for table in ("messages", "sessions", "jobs", "images"):
         conn.execute(f"DELETE FROM {table}")
+    # New epoch in the same transaction as the deletes: once rows are gone the agent must resync,
+    # even if a later step (VACUUM, WAL truncation) fails and raises.
+    conn.execute("UPDATE e2e_state SET data_epoch = ? WHERE id = 1", (new_epoch(),))
     # FTS5 deletes leave tombstoned plaintext in the segment shadow tables; dropping the
     # virtual table removes them.
     conn.execute("DROP TABLE IF EXISTS search_index")

@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import re
 import sqlite3
 
 import pytest
@@ -513,6 +514,8 @@ def test_e2e_rendering(enc, env):
     for src in ["hash-wasm-argon2.umd.min.js", "purify.min.js", "e2e-core.js", "e2e.js"]:
         assert f"/static/{'vendor/' if 'min' in src else ''}{src}" in t
     assert t.index("/static/e2e.js") < t.index("/static/app.js")
+    versions = re.findall(r'/static/[\w./-]+\?v=([^"\s]+)"', t)
+    assert len(versions) >= 5 and all(re.fullmatch(r"[0-9a-f]{12}", v) for v in versions)
     cfg = json.loads(t.split('id="e2e-config">')[1].split("</script>")[0])
     assert cfg["enabled"] is True and cfg["salt"] is None and cfg["binding"] == e2e.binding()
     assert 'id="e2e-search"' in t
@@ -612,8 +615,8 @@ def test_reset_changes_params_and_epoch_in_one_update(conn, monkeypatch):
     real = e2e.wipe_content
     monkeypatch.setattr(e2e, "wipe_content", lambda c: (real(c), seen.append(e2e.get_state(c)))[0])
     e2e.set_params(conn, SALT, KDF, "cd" * 32, reset=True)
-    # after the wipe (before the UPDATE) the old epoch and old key_check are still paired
-    assert seen[0]["epoch"] == epoch and seen[0]["key_check"] == CHECK
+    # the wipe itself already starts a new epoch; params still old until the final UPDATE
+    assert seen[0]["epoch"] != epoch and seen[0]["key_check"] == CHECK
     state = e2e.get_state(conn)
     assert state["epoch"] != epoch and state["key_check"] == "cd" * 32
 
@@ -672,3 +675,55 @@ def test_jobs_migration_recovers_when_jobs_is_old_schema_too(tmp_path):
     assert c.execute("SELECT id FROM jobs").fetchone()["id"] == "j1"
     assert "'search'" in c.execute("SELECT sql FROM sqlite_master WHERE name='jobs'").fetchone()["sql"]
     c.close()
+
+
+# --- wipe failure still starts a new epoch ------------------------------------------
+
+def _fail_truncate(monkeypatch):
+    def boom(conn):
+        raise RuntimeError("wipe incomplete: WAL checkpoint blocked")
+
+    monkeypatch.setattr(e2e, "_truncate_wal", boom)
+
+
+def test_reconcile_wipe_failure_changes_epoch_and_retries(conn, monkeypatch):
+    conn.execute("UPDATE e2e_state SET mode = 'plain'")
+    db.create_job(conn, "search", "*")
+    conn.commit()
+    epoch = e2e.get_state(conn)["epoch"]
+    with monkeypatch.context() as m:
+        _fail_truncate(m)
+        with pytest.raises(RuntimeError):
+            e2e.reconcile_mode(conn, True)
+    state = e2e.get_state(conn)
+    assert state["epoch"] != epoch and state["mode"] == "plain"
+    assert db.get_all_jobs(conn) == []
+    e2e.reconcile_mode(conn, True)  # next start retries the wipe
+    assert e2e.get_state(conn)["mode"] == "e2e"
+
+
+def test_params_reset_wipe_failure_is_503_then_retry(enc, env, monkeypatch):
+    assert enc.put("/agent/e2e-params", headers=KEY, json=PARAMS).status_code == 200
+    sync(enc, session(enc=True))
+    epoch = enc.get("/agent/handshake", headers=KEY).json()["epoch"]
+    other = {**PARAMS, "salt": base64.b64encode(b"z" * 16).decode(), "reset": True}
+    with monkeypatch.context() as m:
+        _fail_truncate(m)
+        r = enc.put("/agent/e2e-params", headers=KEY, json=other)
+    assert r.status_code == 503 and "retry" in r.json()["detail"]
+    hs = enc.get("/agent/handshake", headers=KEY).json()
+    assert hs["salt"] == SALT and hs["epoch"] != epoch
+    assert db.get_sessions(raw_conn(env)) == []
+    r = enc.put("/agent/e2e-params", headers=KEY, json=other)
+    assert r.status_code == 200 and r.json()["salt"] == other["salt"]
+
+
+@pytest.mark.parametrize("value", ["2", "yes", "", "true", "01"])
+def test_invalid_mode_header_is_400(plain, value):
+    r = plain.post("/sync/index", headers={**KEY, "X-AI-Remote-E2E": value}, json={"sessions": [session()]})
+    assert r.status_code == 400 and "invalid X-AI-Remote-E2E header" in r.json()["detail"]
+
+
+def test_mode_header_whitespace_is_stripped(plain):
+    r = plain.post("/sync/index", headers={**KEY, "X-AI-Remote-E2E": " 0 "}, json={"sessions": [session()]})
+    assert r.status_code == 200
