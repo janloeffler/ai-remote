@@ -20,6 +20,20 @@ function errorText(detail) {
   return detail ? I18N[`js.err.${detail}`] || detail : null;
 }
 
+// E2E mode (see e2e.js): window.E2E exists only there; plaintext mode never touches it.
+const e2eActive = () => Boolean(window.E2E && window.E2E.isActive());
+const afterE2eReady = (fn) =>
+  document.addEventListener("DOMContentLoaded", () => (window.e2eReady || Promise.resolve()).then(fn));
+
+// Encrypts a prompt in E2E mode; a failure carries a user-facing message (e2eMessage).
+const preparePrompt = (text, aad) =>
+  e2eActive()
+    ? E2E.encrypt(text, aad).catch((error) => {
+        error.e2eMessage = error.message;
+        throw error;
+      })
+    : Promise.resolve(text);
+
 function makeCountdown(statusNode, verbKey) {
   let countdownId = null;
   const stop = () => {
@@ -219,7 +233,10 @@ document.addEventListener("DOMContentLoaded", () => {
           status.textContent = t("js.command_done");
         } else if (data.status === "failed") {
           countdown.stop();
-          status.textContent = t("js.failed_detail", { msg: data.result_text || t("js.unknown_error") });
+          const msg = e2eActive() ? E2E.decryptResult(data.result_text, jobId) : Promise.resolve(data.result_text);
+          msg.then((text) => {
+            status.textContent = t("js.failed_detail", { msg: text || t("js.unknown_error") });
+          });
           button.disabled = false;
         } else {
           setTimeout(() => poll(jobId), 3000);
@@ -236,12 +253,16 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     button.disabled = true;
     status.textContent = `${t("js.sending")}…`;
-    const prompt = form.prompt.value;
-    fetch(`/chats/${sessionId}/command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    })
+    const plainPrompt = form.prompt.value;
+    const prepared = preparePrompt(plainPrompt, e2eActive() && E2E.aad.resumePrompt(sessionId));
+    prepared
+      .then((prompt) =>
+        fetch(`/chats/${sessionId}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        })
+      )
       .then((res) =>
         res
           .json()
@@ -257,9 +278,9 @@ document.addEventListener("DOMContentLoaded", () => {
         countdown.start(data.eta_seconds);
         poll(data.job_id);
       })
-      .catch(() => {
+      .catch((error) => {
         countdown.stop();
-        status.textContent = t("js.send_error");
+        status.textContent = (error && error.e2eMessage) || t("js.send_error");
         button.disabled = false;
       });
   });
@@ -294,7 +315,10 @@ document.addEventListener("DOMContentLoaded", () => {
           button.disabled = false;
         } else if (data.status === "failed") {
           countdown.stop();
-          status.textContent = t("js.failed_detail", { msg: data.result_text || t("js.unknown_error") });
+          const msg = e2eActive() ? E2E.decryptResult(data.result_text, jobId) : Promise.resolve(data.result_text);
+          msg.then((text) => {
+            status.textContent = t("js.failed_detail", { msg: text || t("js.unknown_error") });
+          });
           button.disabled = false;
         } else {
           setTimeout(() => poll(jobId, projectPath), 3000);
@@ -312,13 +336,17 @@ document.addEventListener("DOMContentLoaded", () => {
     button.disabled = true;
     status.textContent = `${t("js.sending")}…`;
     const projectPath = form.project_path.value;
-    const prompt = form.prompt.value;
+    const plainPrompt = form.prompt.value;
     const tool = form.tool.value;
-    fetch("/projects/command", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_path: projectPath, tool, prompt }),
-    })
+    const prepared = preparePrompt(plainPrompt, e2eActive() && E2E.aad.newSessionPrompt(projectPath, tool));
+    prepared
+      .then((prompt) =>
+        fetch("/projects/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_path: projectPath, tool, prompt }),
+        })
+      )
       .then((res) =>
         res
           .json()
@@ -335,9 +363,9 @@ document.addEventListener("DOMContentLoaded", () => {
         countdown.start(data.eta_seconds);
         poll(data.job_id, projectPath);
       })
-      .catch(() => {
+      .catch((error) => {
         countdown.stop();
-        status.textContent = t("js.send_error");
+        status.textContent = (error && error.e2eMessage) || t("js.send_error");
         button.disabled = false;
       });
   });
@@ -354,6 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
   form.querySelectorAll('input[type="text"]').forEach((input) => {
     input.setAttribute("enterkeyhint", "search");
     input.addEventListener("blur", (event) => {
+      if (input.id === "e2e-search") return; // searches run via the agent (e2e.js), not on blur
       if (event.relatedTarget && event.relatedTarget.closest("a")) return;
       if (input.value !== input.defaultValue) form.requestSubmit();
     });
@@ -384,7 +413,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-document.addEventListener("DOMContentLoaded", () => {
+afterE2eReady(() => {
   document.querySelectorAll(".copy-button").forEach((button) => {
     const content = button.closest(".message").querySelector(".message-content");
     button.addEventListener("click", async () => {
@@ -477,7 +506,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // Message tables: click a header to sort (asc → desc → original order), frontend-only.
 // Numeric columns (incl. %, currency, thousands separators) are right-aligned and
 // sorted numerically; everything else sorts as text with natural/locale ordering.
-document.addEventListener("DOMContentLoaded", () => {
+afterE2eReady(() => {
   const parseNumber = (raw) => {
     let text = raw.trim().replace(/[\s\u00a0%€$£]/g, "");
     if (!/^[-+−]?[\d.,]*\d[\d.,]*$/.test(text)) return null;
@@ -578,7 +607,7 @@ document.addEventListener("DOMContentLoaded", () => {
       button.removeAttribute("aria-busy");
       label.textContent = `${original} — ${message}`;
     };
-    const show = (url) => {
+    const render = (url) => {
       const link = document.createElement("a");
       link.className = "chat-image";
       link.href = url;
@@ -589,6 +618,11 @@ document.addEventListener("DOMContentLoaded", () => {
       img.alt = original;
       link.appendChild(img);
       button.replaceWith(link);
+    };
+    // In E2E mode the server holds ciphertext: fetch, decrypt and show it as a blob: URL.
+    const show = (url) => {
+      if (!e2eActive()) return render(url);
+      return E2E.loadImage(sessionId, button.dataset.path, url).then(render, () => fail(t("js.image_failed")));
     };
 
     button.setAttribute("aria-busy", "true");
