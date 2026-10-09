@@ -191,6 +191,9 @@
     ALLOWED_TAGS,
     ALLOWED_ATTR: ["href", "title", "class", "type", "data-session-id", "data-path"],
     ALLOW_DATA_ATTR: false,
+    // DOMPurify vets every non-data attribute value as a URI, and "claude-code:<id>" looks
+    // like one with an unknown scheme — without this the image buttons lose their session.
+    ADD_URI_SAFE_ATTR: ["data-session-id", "data-path"],
     FORBID_TAGS: ["img", "style", "script", "svg", "math"],
   };
 
