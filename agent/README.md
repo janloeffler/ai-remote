@@ -36,6 +36,28 @@
 
     .venv/bin/pytest -v
 
+## End-to-end encryption (optional)
+
+With `E2E_ENCRYPTION=true` in the repo-root `.env` (and on the server), `./setup-agent.sh`
+asks for the passphrase, derives the key and writes two variables into the plist (mode
+`600`): `AI_REMOTE_E2E=true` and `AI_REMOTE_E2E_KEY` (base64 of the derived 32-byte key —
+never the passphrase). The setup step on its own:
+
+    AI_REMOTE_BACKEND_URL=https://your-domain.example.com AI_REMOTE_API_KEY=<key> \
+    .venv/bin/python -m agent.e2e_setup            # prints the key on stdout
+    .venv/bin/python -m agent.e2e_setup --rotate   # new passphrase; the server drops its cache
+
+Every cycle starts with `GET /agent/handshake`. The agent sends nothing and claims no jobs
+when its mode differs from the server's, when the server has no parameters yet, or when
+its key does not match the server's key check — see `agent/handshake.py` and the error
+log. When the server's data epoch changes (mode switch, passphrase rotation), the agent
+forgets what it synced and pushes everything again.
+
+In E2E mode the agent renders each message to HTML with `agent/render_core.py` (a
+byte-identical copy of `backend/app/render_core.py`; a test keeps them in sync) and
+encrypts titles, previews, messages, job results and images before they leave the Mac.
+Search runs here, as a `search` job. Design: `docs/superpowers/specs/2026-10-09-e2e-encryption-design.md`.
+
 ## Remote command execution (resume/new-session)
 
 Two things must be configured before the "continue chat" / "new session" features
