@@ -92,5 +92,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 IMAGE_UPLOAD_ENABLED = _bool_env("IMAGE_UPLOAD_ENABLED", False)
+# End-to-end encryption of chat content: the server then stores and relays ciphertext only.
+E2E_ENCRYPTION = _bool_env("E2E_ENCRYPTION", False)
 IMAGE_RETENTION_DAYS = _int_env("IMAGE_RETENTION_DAYS", 3, minimum=1)
 IMAGE_MAX_BYTES = 5 * 1024 * 1024

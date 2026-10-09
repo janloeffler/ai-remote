@@ -73,6 +73,13 @@
   <main>{% block content %}{% endblock %}</main>
   <footer class="build-info">{{ t('footer.version', ts=build_timestamp) }}</footer>
   <script type="application/json" id="i18n-data">{{ js_strings() | tojson }}</script>
+  {% block e2e_assets %}{% if e2e_enabled() %}
+  <script type="application/json" id="e2e-config">{{ e2e_config() | tojson }}</script>
+  <script src="/static/vendor/hash-wasm-argon2.umd.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/e2e-core.js"></script>
+  <script src="/static/e2e.js"></script>
+  {% endif %}{% endblock %}
   <script src="/static/app.js"></script>
 </body>
 </html>

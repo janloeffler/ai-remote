@@ -7,6 +7,8 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
+_JOB_TYPES = ("fetch_full", "resume_message", "new_session", "fetch_image", "search")
+
 _SORT_CLAUSES = {
     "date_desc": "last_updated_at DESC",
     "date_asc": "last_updated_at ASC",
@@ -36,7 +38,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_add_loaded_message_count(conn)
     _migrate_add_active_until(conn)
     _migrate_add_poll_interval_overrides(conn)
-    _migrate_jobs_allow_fetch_image(conn)
+    _migrate_jobs_check_constraint(conn)
+    from . import e2e  # lazy: e2e imports db
+
+    e2e.ensure_state_row(conn)
+
+
+def _e2e_enabled() -> bool:
+    try:
+        from . import settings  # lazy: settings insists on API_KEY/SECRET_KEY at import
+    except RuntimeError:
+        return False
+    return settings.E2E_ENCRYPTION
 
 
 def _migrate_add_loaded_message_count(conn: sqlite3.Connection) -> None:
@@ -65,10 +78,10 @@ def _migrate_add_poll_interval_overrides(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _migrate_jobs_allow_fetch_image(conn: sqlite3.Connection) -> None:
-    """SQLite can't alter a CHECK constraint, so an older jobs table is rebuilt."""
+def _migrate_jobs_check_constraint(conn: sqlite3.Connection) -> None:
+    """SQLite can't alter a CHECK constraint, so a jobs table lacking a job type is rebuilt."""
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").fetchone()
-    if row is None or "fetch_image" in row["sql"]:
+    if row is None or all(f"'{job_type}'" in row["sql"] for job_type in _JOB_TYPES):
         return
     conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
     conn.executescript(SCHEMA_PATH.read_text())
@@ -106,14 +119,15 @@ def upsert_session(conn: sqlite3.Connection, session: dict) -> None:
         """,
         session,
     )
-    conn.execute(
-        "DELETE FROM search_index WHERE session_id = ? AND kind = 'header'",
-        (session["id"],),
-    )
-    conn.execute(
-        "INSERT INTO search_index (session_id, kind, text) VALUES (?, 'header', ?)",
-        (session["id"], f"{session['title']} {session['last_message_preview']}"),
-    )
+    if not _e2e_enabled():  # E2E: no FTS at all, the server only holds ciphertext
+        conn.execute(
+            "DELETE FROM search_index WHERE session_id = ? AND kind = 'header'",
+            (session["id"],),
+        )
+        conn.execute(
+            "INSERT INTO search_index (session_id, kind, text) VALUES (?, 'header', ?)",
+            (session["id"], f"{session['title']} {session['last_message_preview']}"),
+        )
     conn.commit()
 
 
@@ -140,15 +154,21 @@ def get_sessions(
     q: str | None = None,
     limit: int = 100,
     sort: str = "date_desc",
+    ids: Sequence[str] | None = None,
 ) -> list[dict]:
     ids_filter = None
+    if ids is not None:
+        ids_filter = set(ids)
+        if not ids_filter:
+            return []
     if q:
         safe_q = '"' + q.replace('"', '""') + '"'
         rows = conn.execute(
             "SELECT DISTINCT session_id FROM search_index WHERE search_index MATCH ?",
             (safe_q,),
         ).fetchall()
-        ids_filter = {row["session_id"] for row in rows}
+        matched = {row["session_id"] for row in rows}
+        ids_filter = matched if ids_filter is None else ids_filter & matched
         if not ids_filter:
             return []
 
@@ -216,16 +236,19 @@ def replace_messages(
     conn: sqlite3.Connection, session_id: str, messages: list[dict], is_complete: bool | None = None
 ) -> None:
     conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    conn.execute("DELETE FROM search_index WHERE session_id = ? AND kind = 'message'", (session_id,))
+    fts = not _e2e_enabled()
+    if fts:
+        conn.execute("DELETE FROM search_index WHERE session_id = ? AND kind = 'message'", (session_id,))
     for m in messages:
         conn.execute(
             "INSERT INTO messages (session_id, idx, role, timestamp, content) VALUES (?, ?, ?, ?, ?)",
             (session_id, m["idx"], m["role"], m["timestamp"], m["content"]),
         )
-        conn.execute(
-            "INSERT INTO search_index (session_id, kind, text) VALUES (?, 'message', ?)",
-            (session_id, m["content"]),
-        )
+        if fts:
+            conn.execute(
+                "INSERT INTO search_index (session_id, kind, text) VALUES (?, 'message', ?)",
+                (session_id, m["content"]),
+            )
     if is_complete is None:
         conn.execute(
             "UPDATE sessions SET loaded_message_count = ?, "
@@ -304,7 +327,7 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-_JOB_TIMEOUTS_SECONDS = {"fetch_full": 300, "fetch_image": 300, "resume_message": 1800, "new_session": 1800}
+_JOB_TIMEOUTS_SECONDS = {"fetch_full": 300, "fetch_image": 300, "search": 300, "resume_message": 1800, "new_session": 1800}
 
 
 def fail_stale_jobs(conn: sqlite3.Connection) -> None:

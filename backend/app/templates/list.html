@@ -5,7 +5,12 @@
   {% else %}{{ t('list.never_contact') }}{% endif %}
 </p>
 <form method="get" action="/" class="toolbar">
+  {% if e2e_enabled() %}
+  <input type="text" id="e2e-search" placeholder="{{ t('list.search') }}" autocomplete="off">
+  {% if ids %}<input type="hidden" name="ids" value="{{ ids }}">{% endif %}
+  {% else %}
   <input type="text" name="q" value="{{ q or '' }}" placeholder="{{ t('list.search') }}">
+  {% endif %}
   <div class="combobox">
     <input type="text" id="project-input" name="project" value="{{ project or '' }}"
            placeholder="{{ t('list.path') }}" autocomplete="off" role="combobox"
@@ -30,22 +35,27 @@
   <select name="sort">
     <option value="date_desc" {% if sort == "date_desc" %}selected{% endif %}>{{ t('list.sort.date_desc') }}</option>
     <option value="date_asc" {% if sort == "date_asc" %}selected{% endif %}>{{ t('list.sort.date_asc') }}</option>
-    <option value="title_asc" {% if sort == "title_asc" %}selected{% endif %}>{{ t('list.sort.title_asc') }}</option>
+    {% if not e2e_enabled() %}<option value="title_asc" {% if sort == "title_asc" %}selected{% endif %}>{{ t('list.sort.title_asc') }}</option>{% endif %}
     <option value="path_asc" {% if sort == "path_asc" %}selected{% endif %}>{{ t('list.sort.path_asc') }}</option>
   </select>
   <button type="submit" id="filter-submit">{{ t('list.filter') }}</button>
 </form>
+{% if e2e_enabled() and ids %}
+<p class="search-note">{{ t('list.search_results') }} <a href="/">{{ t('list.search_clear') }}</a></p>
+{% endif %}
 <script type="application/json" id="project-paths-data">{{ {"paths": project_paths, "homeDir": local_home_dir} | tojson }}</script>
 <ul class="session-list">
   {% for s in sessions %}
   <li>
     <a href="/chats/{{ s.id }}">
       <div class="session-header">
-        <strong>{{ s.title }}</strong>
+        {% if e2e_enabled() %}<strong data-e2e="{{ s.title }}" data-e2e-aad="session|{{ s.id }}|title" data-e2e-kind="text">🔒</strong>
+        {% else %}<strong>{{ s.title }}</strong>{% endif %}
         <span class="tool-badge tool-badge-{{ s.tool }}">{{ s.tool }}</span>
       </div>
       <span class="project"><code>{{ s.project_path }}</code></span>
-      <p>{{ s.last_message_preview }}</p>
+      {% if e2e_enabled() %}<p data-e2e="{{ s.last_message_preview }}" data-e2e-aad="session|{{ s.id }}|preview" data-e2e-kind="preview-text"></p>
+      {% else %}<p>{{ s.last_message_preview }}</p>{% endif %}
       <div class="session-dates">
         <time class="updated">{{ t('list.updated', dt=(s.last_updated_at | localdt)) }}</time>
         <time class="created">{{ t('list.started', dt=(s.created_at | localdt)) }}</time>

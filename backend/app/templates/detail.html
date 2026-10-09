@@ -3,10 +3,12 @@
 {% if session is none %}
 <p>{{ t('detail.not_found') }}</p>
 {% else %}
-<h1>{{ session.title }}</h1>
+{% if e2e_enabled() %}<h1 data-e2e="{{ session.title }}" data-e2e-aad="session|{{ session.id }}|title" data-e2e-kind="text">🔒</h1>
+{% else %}<h1>{{ session.title }}</h1>{% endif %}
 <p class="session-meta"><code>{{ session.project_path }}</code> — <span class="tool-badge tool-badge-{{ session.tool }}">{{ session.tool }}</span></p>
 {% if session.loaded_message_count == 0 %}
-<div>{{ session.last_message_preview | chat_markdown | safe }}</div>
+{% if e2e_enabled() %}<div data-e2e="{{ session.last_message_preview }}" data-e2e-aad="session|{{ session.id }}|preview" data-e2e-kind="preview-html"></div>
+{% else %}<div>{{ session.last_message_preview | chat_markdown | safe }}</div>{% endif %}
 {% else %}
 <div class="messages">
   {% for m in messages %}
@@ -15,10 +17,14 @@
       <time>{{ m.timestamp | localdt }}</time>
       <button class="copy-button" type="button" aria-label="{{ t('detail.copy') }}">📋</button>
     </div>
-    <div class="message-content">{{ m.content | chat_markdown | safe }}</div>
+    {% if e2e_enabled() %}<div class="message-content" data-e2e="{{ m.content }}" data-e2e-aad="msg|{{ session.id }}|{{ m.idx }}" data-e2e-kind="html"></div>
+    {% else %}<div class="message-content">{{ m.content | chat_markdown | safe }}</div>{% endif %}
   </div>
   {% endfor %}
 </div>
+{% endif %}
+{% if e2e_enabled() and image_upload_enabled %}
+<script type="application/json" id="image-keys-data">{{ (image_keys or []) | list | sort | tojson }}</script>
 {% endif %}
 {% if not session.full_content_synced %}
 <div class="history-actions">

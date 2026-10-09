@@ -9,8 +9,13 @@
       <span class="job-status job-status-{{ j.status }}">{{ j.status }}</span>
     </div>
     <p class="job-target">{{ j.target }}</p>
+    {% if e2e_enabled() %}
+    {% if j.payload %}<p class="job-payload" data-e2e-job-payload data-type="{{ j.type }}" data-target="{{ j.target }}">{{ j.payload }}</p>{% endif %}
+    {% if j.result_text %}<pre class="job-result" data-e2e-job-result data-job-id="{{ j.id }}">{{ j.result_text }}</pre>{% endif %}
+    {% else %}
     {% if j.payload %}<p class="job-payload">{{ j.payload }}</p>{% endif %}
     {% if j.result_text %}<pre class="job-result">{{ j.result_text }}</pre>{% endif %}
+    {% endif %}
     <time>{{ j.created_at | localdt }}</time>
   </li>
   {% else %}

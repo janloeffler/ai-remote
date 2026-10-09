@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 # element, and nothing else bounded them (SEC-014). Generous enough for a pasted stack
 # trace or diff, small enough that it can't be used to inflate the database.
 PROMPT_MAX_LENGTH = 32_000
+# Ciphertext is longer than its plaintext (nonce, tag, base64). The model accepts the larger
+# bound; the routes enforce the mode-specific one.
+PROMPT_MAX_LENGTH_E2E = 48_000
 
 
 class MessageIn(BaseModel):
@@ -41,13 +44,13 @@ class JobCompleteRequest(BaseModel):
 
 
 class CommandRequest(BaseModel):
-    prompt: str = Field(max_length=PROMPT_MAX_LENGTH)
+    prompt: str = Field(max_length=PROMPT_MAX_LENGTH_E2E)
 
 
 class NewSessionCommandRequest(BaseModel):
     project_path: str
     tool: Literal["claude-code", "cursor"]
-    prompt: str = Field(max_length=PROMPT_MAX_LENGTH)
+    prompt: str = Field(max_length=PROMPT_MAX_LENGTH_E2E)
 
 
 # base64 of IMAGE_MAX_BYTES (5 MiB) is ~7.0M characters; pydantic rejects anything bigger
@@ -63,3 +66,14 @@ class ImageUploadRequest(BaseModel):
 
 class FetchImageRequest(BaseModel):
     path: str = Field(max_length=1024)
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(max_length=PROMPT_MAX_LENGTH_E2E)
+
+
+class E2EParamsRequest(BaseModel):
+    salt: str
+    kdf: dict
+    key_check: str
+    reset: bool = False

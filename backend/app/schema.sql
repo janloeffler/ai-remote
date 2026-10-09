@@ -30,7 +30,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('fetch_full', 'resume_message', 'new_session', 'fetch_image')),
+    type TEXT NOT NULL CHECK(type IN ('fetch_full', 'resume_message', 'new_session', 'fetch_image', 'search')),
     target TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'failed')),
@@ -62,4 +62,13 @@ CREATE TABLE IF NOT EXISTS images (
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (session_id, path_key)
+);
+
+CREATE TABLE IF NOT EXISTS e2e_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    mode TEXT,
+    salt TEXT,
+    kdf TEXT,
+    key_check TEXT,
+    data_epoch TEXT NOT NULL
 );

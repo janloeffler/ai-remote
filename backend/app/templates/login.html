@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block header_actions %}{% endblock %}
 {% block tabs %}{% endblock %}
+{% block e2e_assets %}{% endblock %}
 {% block content %}
 <form method="post" action="/login" class="login-form">
   <label>{{ t('login.api_key') }} <input type="password" name="api_key" autocomplete="current-password" autofocus></label>

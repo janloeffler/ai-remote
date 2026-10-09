@@ -13,16 +13,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ai_tools, allowlist, db, i18n, images, rate_limit, settings
+from . import ai_tools, allowlist, db, e2e, i18n, images, rate_limit, settings
 from .auth import require_api_key, require_session, secrets_match, session_binding
 from .datetime_filter import format_datetime
 from .markdown_filter import ImageContext, render_markdown
 from .models import (
+    PROMPT_MAX_LENGTH,
     CommandRequest,
+    E2EParamsRequest,
     FetchImageRequest,
     ImageUploadRequest,
     JobCompleteRequest,
     NewSessionCommandRequest,
+    SearchRequest,
     SyncIndexRequest,
 )
 
@@ -68,6 +71,20 @@ def _chat_markdown(context, text: str) -> str:
 
 templates.env.filters["chat_markdown"] = _chat_markdown
 templates.env.globals["image_upload_enabled"] = settings.IMAGE_UPLOAD_ENABLED
+# Functions, not values: they must follow a settings change at call time.
+templates.env.globals["e2e_enabled"] = lambda: settings.E2E_ENCRYPTION
+
+
+def _e2e_config() -> dict:
+    """Non-secret parameters the browser needs to derive and check the key (auth'd pages only)."""
+    conn = db.get_connection(os.environ.get("DATABASE_PATH", "app.db"))
+    try:
+        return e2e.browser_config(conn)
+    finally:
+        conn.close()
+
+
+templates.env.globals["e2e_config"] = _e2e_config
 
 
 @pass_context
@@ -105,6 +122,7 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 def on_startup() -> None:
     conn = db.get_connection(os.environ.get("DATABASE_PATH", "app.db"))
     db.init_db(conn)
+    e2e.reconcile_mode(conn, settings.E2E_ENCRYPTION)
     images.cleanup_expired(conn)
     conn.close()
 
@@ -133,8 +151,29 @@ def jobs_pending(conn=Depends(db.get_db_dependency)):
     return {"jobs": jobs, "poll_interval_seconds": interval}
 
 
+@app.get("/agent/handshake", dependencies=[Depends(require_api_key)])
+def agent_handshake(conn=Depends(db.get_db_dependency)):
+    return e2e.handshake_payload(conn)
+
+
+@app.put("/agent/e2e-params", dependencies=[Depends(require_api_key)])
+def agent_e2e_params(body: E2EParamsRequest, conn=Depends(db.get_db_dependency)):
+    try:
+        e2e.set_params(conn, body.salt, body.kdf, body.key_check, body.reset)
+    except e2e.ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return e2e.handshake_payload(conn)
+
+
 @app.post("/jobs/{job_id}/complete", dependencies=[Depends(require_api_key)])
 def jobs_complete(job_id: str, body: JobCompleteRequest, conn=Depends(db.get_db_dependency)):
+    enabled = settings.E2E_ENCRYPTION
+    if not all(e2e.valid_content(m.content, enabled) for m in body.messages) or not e2e.valid_content(
+        body.result_text, enabled, allow_empty=True
+    ):
+        raise HTTPException(status_code=422, detail="content does not match the server's E2E mode")
     messages = [m.model_dump() for m in body.messages]
     db.complete_job(conn, job_id, body.status, body.result_text, messages, body.is_complete)
     return {"ok": True}
@@ -184,6 +223,20 @@ def fetch_full(session_id: str, full: bool = False, conn=Depends(db.get_db_depen
     return {"job_id": job_id, "eta_seconds": eta_seconds}
 
 
+@app.post("/search", dependencies=[Depends(require_session)])
+def search(body: SearchRequest, conn=Depends(db.get_db_dependency)):
+    # Read-only like fetch_full, so the remote-command kill switch does not apply.
+    if not settings.E2E_ENCRYPTION:
+        raise HTTPException(status_code=409, detail="search jobs exist only in E2E mode")
+    if not e2e.is_ciphertext(body.query):
+        raise HTTPException(status_code=422, detail="query must be ciphertext")
+    job_id = db.create_job(conn, "search", "*", payload=json.dumps({"query": body.query}))
+    interval = db.current_poll_interval_seconds(
+        conn, settings.AI_REMOTE_INTERVAL_SECONDS, settings.AI_REMOTE_ACTIVE_INTERVAL_SECONDS
+    )
+    return {"job_id": job_id, "eta_seconds": _compute_eta_seconds(db.get_last_agent_contact(conn), interval)}
+
+
 @app.get("/chats/{session_id}/status", dependencies=[Depends(require_session)])
 def job_status(session_id: str, job_id: str, conn=Depends(db.get_db_dependency)):
     # The agent is the usual caller of fail_stale_jobs; while it is unreachable, the page's own
@@ -195,6 +248,11 @@ def job_status(session_id: str, job_id: str, conn=Depends(db.get_db_dependency))
 
 @app.post("/sync/index", dependencies=[Depends(require_api_key)])
 def sync_index(body: SyncIndexRequest, conn=Depends(db.get_db_dependency)):
+    enabled = settings.E2E_ENCRYPTION
+    for session in body.sessions:
+        fields = [session.title, session.last_message_preview, *(m.content for m in session.recent_messages)]
+        if not all(e2e.valid_content(f, enabled) for f in fields):
+            raise HTTPException(status_code=422, detail="content does not match the server's E2E mode")
     received = 0
     for session in body.sessions:
         if session.tool not in settings.ENABLED_TOOLS:
@@ -217,7 +275,10 @@ def sync_image(body: ImageUploadRequest, conn=Depends(db.get_db_dependency)):
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=400, detail="invalid base64")
     try:
-        key, _ = images.store(conn, body.session_id, body.path, data)
+        if settings.E2E_ENCRYPTION:
+            key = images.store_encrypted(conn, body.session_id, body.path, data)
+        else:
+            key, _ = images.store(conn, body.session_id, body.path, data)
     except ValueError as exc:
         status = 413 if str(exc) == "too large" else 415
         raise HTTPException(status_code=status, detail=str(exc))
@@ -253,7 +314,9 @@ def fetch_image(session_id: str, body: FetchImageRequest, conn=Depends(db.get_db
     # Only paths the chat itself mentions: the path is handed to the agent, which reads a
     # file from it, so it must not be a way to name arbitrary files (cf. SEC-005).
     path = body.path
-    if not images.is_image_path(path) or not any(path in m["content"] for m in db.get_messages(conn, session_id)):
+    # In E2E mode the server cannot read messages; the agent runs the same check on plaintext.
+    mentioned = settings.E2E_ENCRYPTION or any(path in m["content"] for m in db.get_messages(conn, session_id))
+    if not images.is_image_path(path) or not mentioned:
         raise HTTPException(status_code=400, detail="path not found in chat")
     key = images.path_key(session_id, path)
     url = f"/chats/{session_id}/images/{key}"
@@ -304,6 +367,16 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+def _check_prompt(text: str) -> None:
+    """E2E: ciphertext only (up to the model's 48,000 chars). Plaintext keeps its 32,000 cap."""
+    if settings.E2E_ENCRYPTION:
+        ok = e2e.is_ciphertext(text)
+    else:
+        ok = len(text) <= PROMPT_MAX_LENGTH
+    if not ok:
+        raise HTTPException(status_code=422, detail="prompt does not match the server's E2E mode or is too long")
+
+
 def _expand_home_dir(value: str) -> str:
     if value == "~":
         return settings.LOCAL_HOME_DIR
@@ -329,11 +402,22 @@ def list_chats(
     q: str | None = None,
     sort: str = "date_desc",
     limit: int = 100,
+    ids: str | None = None,
     conn=Depends(db.get_db_dependency),
 ):
+    id_list = [i.strip() for i in (ids or "").split(",") if i.strip()]
+    if len(id_list) > 100:
+        raise HTTPException(status_code=422, detail="too many ids")
+    if settings.E2E_ENCRYPTION:
+        # The server holds ciphertext: no FTS and no title order. The query lives in the
+        # browser and is answered by a search job.
+        q = None
+        if sort == "title_asc":
+            sort = "date_desc"
     expanded_project = _expand_home_dir(project) if project else project
     sessions = db.get_sessions(
-        conn, tool=tool, tools=settings.ENABLED_TOOLS, project=expanded_project, date_group=group, q=q, limit=limit, sort=sort
+        conn, tool=tool, tools=settings.ENABLED_TOOLS, project=expanded_project, date_group=group, q=q, limit=limit, sort=sort,
+        ids=id_list if ids is not None else None,
     )
     poll_mode, poll_interval_seconds = _poll_mode(conn)
     return templates.TemplateResponse(
@@ -346,6 +430,7 @@ def list_chats(
             "group": group,
             "q": q,
             "sort": sort,
+            "ids": ",".join(id_list),
             "last_agent_contact": db.get_last_agent_contact(conn),
             "project_paths": db.get_distinct_project_paths(conn, settings.ENABLED_TOOLS),
             "enabled_tools": settings.ENABLED_TOOLS,
@@ -494,6 +579,7 @@ def chat_detail(request: Request, session_id: str, conn=Depends(db.get_db_depend
 
 @app.post("/chats/{session_id}/command", dependencies=[Depends(require_session)])
 def send_command(session_id: str, body: CommandRequest, conn=Depends(db.get_db_dependency)):
+    _check_prompt(body.prompt)
     session = _get_visible_session(conn, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -532,6 +618,7 @@ def new_session_form(request: Request, conn=Depends(db.get_db_dependency)):
 
 @app.post("/projects/command", dependencies=[Depends(require_session)])
 def send_new_session_command(body: NewSessionCommandRequest, conn=Depends(db.get_db_dependency)):
+    _check_prompt(body.prompt)
     if db.get_remote_commands_paused(conn):
         raise HTTPException(status_code=409, detail="remote commands are paused")
     if body.tool not in settings.ENABLED_TOOLS:

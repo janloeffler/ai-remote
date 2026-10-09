@@ -13,7 +13,7 @@ from . import db
 from .render_core import BARE_PATH_RE, IMAGE_EXTENSIONS, MARKER_RE, is_image_path, path_key  # noqa: F401  (re-exported)
 
 KEY_RE = re.compile(r"[0-9a-f]{32}")
-_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "application/octet-stream": "bin"}
 
 
 def sniff_mime(data: bytes) -> str | None:
@@ -56,6 +56,25 @@ def store(conn, session_id: str, source_path: str, data: bytes) -> tuple[str, st
     tmp.replace(target)
     db.save_image(conn, session_id, key, source_path, mime, len(data))
     return key, mime
+
+
+def store_encrypted(conn, session_id: str, source_path: str, data: bytes) -> str:
+    """E2E: stores an already-encrypted image blob as-is. Raises ValueError like ``store``."""
+    from . import e2e, settings
+
+    if len(data) > settings.IMAGE_MAX_BYTES + e2e.IMAGE_OVERHEAD:
+        raise ValueError("too large")
+    if not data.startswith(e2e.IMAGE_MAGIC):
+        raise ValueError("not an encrypted image")
+    mime = "application/octet-stream"
+    key = path_key(session_id, source_path)
+    target = file_path(key, mime)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(target)
+    db.save_image(conn, session_id, key, source_path, mime, len(data))
+    return key
 
 
 def cleanup_expired(conn) -> int:
