@@ -5,26 +5,15 @@ The agent uploads image files that a chat refers to; the UI then shows them inli
 what an "image" is (PNG/JPEG/GIF/WebP by magic number, never SVG — it can carry script).
 """
 
-import hashlib
 import os
 import re
 from pathlib import Path
 
 from . import db
+from .render_core import BARE_PATH_RE, IMAGE_EXTENSIONS, MARKER_RE, is_image_path, path_key  # noqa: F401  (re-exported)
 
 KEY_RE = re.compile(r"[0-9a-f]{32}")
-IMAGE_EXTENSIONS = r"(?:png|jpe?g|gif|webp)"
-# `[Image: source: /tmp/x.png]` is what Claude Code writes for a pasted image.
-MARKER_RE = re.compile(r"\[Image: source: ([^\]\n]+?)\]")
-# A bare path to an image in running text (not inside backticks or a URL).
-BARE_PATH_RE = re.compile(
-    rf"(?<![\w`/.:])((?:/(?:[\w.\-]+/)*|~/(?:[\w.\-]+/)*)[\w.\-]+\.{IMAGE_EXTENSIONS})(?![\w/])", re.IGNORECASE
-)
 _EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
-
-
-def path_key(session_id: str, path: str) -> str:
-    return hashlib.sha256(f"{session_id}\0{path}".encode("utf-8")).hexdigest()[:32]
 
 
 def sniff_mime(data: bytes) -> str | None:
@@ -79,7 +68,3 @@ def cleanup_expired(conn) -> int:
         except OSError:
             pass
     return len(expired)
-
-
-def is_image_path(path: str) -> bool:
-    return re.fullmatch(rf".+\.{IMAGE_EXTENSIONS}", path, re.IGNORECASE) is not None
