@@ -17,7 +17,7 @@ flowchart LR
     end
     subgraph Server["your-domain.example.com (Docker)"]
         API["Backend API"]
-        DB["SQLite + FTS5\n(index, message cache, job queue)"]
+        DB["SQLite + FTS5\n(index, message cache, job queue)\nciphertext only in E2E mode"]
         Web["Frontend (PWA)"]
         API --- DB
         API --- Web
@@ -39,6 +39,8 @@ without polling aggressively all day when you're not.
 
 - Read-only browsing of all local Claude Code + Cursor chat sessions: list,
   filter by project/date/tool, full-text search, formatted detail view.
+  Optionally [end-to-end encrypted](#end-to-end-encryption-optional): the
+  server then stores ciphertext only.
 - Remote commands: continue an existing session or start a new one in an
   allow-listed project, from your phone.
 - Adaptive poll interval with a header indicator showing which mode
@@ -101,6 +103,7 @@ via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
 | `CURSOR_ENABLED` | `true` | backend, agent | Same for Cursor. |
 | `IMAGE_UPLOAD_ENABLED` | `false` | backend + agent | Show chat images inline: the agent uploads pasted images automatically, linked image files (inside an allow-listed project) on click. Moves files to the server — opt in. Max 5 MB, PNG/JPEG/GIF/WebP. |
 | `IMAGE_RETENTION_DAYS` | `3` | backend | Uploaded images are deleted from the server after this many days. |
+| `E2E_ENCRYPTION` | `false` | backend + agent | End-to-end encryption of chat content, see [below](#end-to-end-encryption-optional). Must match on both sides; switching wipes the server cache. |
 | `DEFAULT_AI` | `claude` | backend | `claude` or `cursor`: preselected tool for new sessions. With only one tool enabled that tool is used regardless. If both tools are disabled the UI shows an error and the agent idles. |
 | `TRUSTED_PROXY_HOPS` | `0` | backend | Number of reverse-proxy hops to trust when reading `X-Forwarded-For` for login-throttle bucketing. Must be set together with `TRUSTED_PROXIES` — the backend fails fast at startup if only one is set. |
 | `TRUSTED_PROXIES` | *(empty)* | backend | Comma-separated peer addresses of your trusted reverse proxy. Required if `TRUSTED_PROXY_HOPS > 0`. |
@@ -135,6 +138,31 @@ deliberately not among them, so the API docs stay off in production.
 
 After a deploy, check `/login` returns 200 and that an agent request without the key
 returns 401. To rotate the secrets, see `./generate-secrets.sh --rotate` above.
+
+## End-to-end encryption (optional)
+
+By default the server stores your chats in plaintext (SQLite + FTS5, image files). With
+`E2E_ENCRYPTION=true` the agent encrypts titles, previews, messages, images, job prompts and
+results with a key derived from a passphrase (Argon2id, AES-256-GCM); the server only ever
+sees ciphertext and your browser decrypts. It protects against leaked data files, backups
+and a passive root on the server — not against an active attacker who changes the served
+JavaScript. Details and limits: [`SECURITY.md`](SECURITY.md).
+
+Enable, in this order:
+
+1. Set `E2E_ENCRYPTION=true` in `.env`.
+2. Deploy the server (the first start with the new mode wipes its cache and job history).
+3. Run `./setup-agent.sh` on the Mac. It asks for a passphrase (min. 16 characters, entered twice),
+   stores the derived key (not the passphrase) in the launchd plist (mode `600`) and the agent resyncs.
+4. Open the app, log in with the API key, then enter the passphrase once per browser.
+
+Rotate the passphrase with `./setup-agent.sh --rotate-passphrase` (wipes the server cache; every
+browser must enter the new passphrase). Disable by setting `E2E_ENCRYPTION=false`, deploying and
+re-running `./setup-agent.sh` (wipes again, the agent resyncs in plaintext). Delete old backups of
+`data/` yourself — they stay plaintext.
+
+Trade-offs: search runs on the Mac (the agent must be online), sorting by title is unavailable, and
+project paths, image paths, timestamps and message counts stay plaintext.
 
 ## Security model
 
@@ -177,6 +205,8 @@ returns 401. To rotate the secrets, see `./generate-secrets.sh --rotate` above.
 - **Supply chain:** dependencies are hash-pinned and installed with
   `--require-hashes`; the lockfile tooling ignores releases younger than 7 days
   (see [Dependencies](#dependencies)).
+- **Optional E2E encryption** of chat content against leaked server data, see
+  [above](#end-to-end-encryption-optional).
 - Known limitations beyond this are tracked in [`SECURITY.md`](SECURITY.md).
 
 ## Project structure

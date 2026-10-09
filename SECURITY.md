@@ -48,6 +48,41 @@ Medium/Low ones. What follows is what that audit found and this project has
 deliberately *not* fixed, because doing so would mean a design change out of
 proportion to a single-user tool.
 
+## Optional end-to-end encryption (`E2E_ENCRYPTION=true`)
+
+Off by default. When on, the Mac agent encrypts message contents, tool output, images, job
+prompts and results, session titles and previews with AES-256-GCM under a key derived from your
+passphrase (Argon2id). The server stores and relays ciphertext only; the browser derives the same
+key after login and decrypts locally.
+
+**Covered**
+- Leaked data files: backups, snapshots, copied volumes, retired disks, file-read bugs.
+- A passive attacker with root on the server (reads disk, `.env`, process memory): the server
+  never has the key or the passphrase.
+
+**Not covered**
+- An active attacker on the server. The server delivers the JavaScript that receives your
+  passphrase; someone who modifies it can capture the passphrase at your next login. This is
+  inherent to web-delivered E2E.
+- `API_KEY` is unchanged: root on the server still reads it, and it grants remote command
+  execution on your Mac. E2E does not address that.
+- Metadata stays plaintext: session ids, tool, project paths, image source paths, timestamps,
+  message counts, roles, sizes, job type/status/target.
+- Old backups. Switching the mode wipes the server's database (securely, then `VACUUM`), but
+  backups made earlier stay plaintext — delete them yourself.
+
+**Keys**
+- On the Mac the derived key (not the passphrase) sits in the launchd plist
+  (`AI_REMOTE_E2E_KEY`), file mode `600`. Anyone who can read your user's files can read it —
+  as they could already read your chats.
+- In the browser a non-extractable key is kept in IndexedDB until you log out or `API_KEY` /
+  the passphrase is rotated. Malicious script running in the page while unlocked can use it.
+- Passphrase strength matters: the salt and key-check value are served to authenticated
+  sessions and the agent, and allow an offline guess attack. Use a long, unique passphrase
+  (minimum 16 characters is enforced).
+- Fail-closed: if the agent's and server's modes or keys disagree, the agent syncs nothing and
+  claims no jobs, and the server rejects plaintext in E2E mode.
+
 ## Known limitations
 
 - **One secret serves two principals, and sessions are stateless.** `API_KEY` is the

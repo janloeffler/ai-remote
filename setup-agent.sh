@@ -25,6 +25,7 @@ DEFAULT_BACKEND_URL="https://your-domain.example.com"
 BACKEND_URL_OVERRIDE=""
 API_KEY_OVERRIDE=""
 UNINSTALL=false
+ROTATE_PASSPHRASE=false
 
 show_help() {
   cat <<EOF
@@ -41,6 +42,10 @@ Options:
                        AI_REMOTE_BACKEND_URL from .env, falling back to
                        ${DEFAULT_BACKEND_URL})
   --api-key KEY        Use this API key instead of reading API_KEY from .env
+  --rotate-passphrase  E2E only (E2E_ENCRYPTION=true): set a NEW end-to-end
+                       passphrase. WIPES the server cache and job history
+                       (the agent resyncs) and every browser must enter the
+                       new passphrase again.
   --uninstall          Stop and remove the installed service, then exit
   --help, -h           Show this help
 EOF
@@ -50,6 +55,7 @@ for arg in "$@"; do
   case "$arg" in
     --backend-url=*) BACKEND_URL_OVERRIDE="${arg#*=}" ;;
     --api-key=*) API_KEY_OVERRIDE="${arg#*=}" ;;
+    --rotate-passphrase) ROTATE_PASSPHRASE=true ;;
     --uninstall) UNINSTALL=true ;;
     --help|-h) show_help; exit 0 ;;
     *) echo "Unknown option: $arg"; show_help; exit 1 ;;
@@ -108,6 +114,48 @@ CURSOR_ENABLED_XML="$(xml_escape "${CURSOR_ENABLED:-true}")"
 DEFAULT_AI_XML="$(xml_escape "${DEFAULT_AI:-claude}")"
 IMAGE_UPLOAD_ENABLED_XML="$(xml_escape "${IMAGE_UPLOAD_ENABLED:-false}")"
 
+# Optional end-to-end encryption. The key is derived from a passphrase by the
+# setup CLI (agent/agent/e2e_setup.py); only the derived key goes into the plist.
+E2E_ENABLED=false
+case "$(printf '%s' "${E2E_ENCRYPTION:-false}" | tr '[:upper:]' '[:lower:]')" in
+  true|1|yes|on) E2E_ENABLED=true ;;
+esac
+
+E2E_KEY=""
+E2E_KEY_ENTRY=""
+if [ "$E2E_ENABLED" = true ]; then
+  EXISTING_E2E_KEY=""
+  if [ -f "$PLIST_DEST" ]; then
+    EXISTING_E2E_KEY="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:AI_REMOTE_E2E_KEY" "$PLIST_DEST" 2>/dev/null || true)"
+  fi
+  RSTFLAG=()
+  if [ "$ROTATE_PASSPHRASE" = true ]; then
+    echo -e "${YELLOW}==> Rotating the E2E passphrase: the server cache and job history will be wiped and every browser must enter the new passphrase.${NC}"
+    RSTFLAG=(--rotate)
+  fi
+  echo -e "${BLUE}==> E2E encryption: checking passphrase/key${NC}"
+  # stdout carries only the key (never echoed); prompts and messages use the TTY/stderr.
+  if ! E2E_KEY="$(cd agent && \
+      AI_REMOTE_BACKEND_URL="$BACKEND_URL" AI_REMOTE_API_KEY="$API_KEY" \
+      AI_REMOTE_E2E_KEY="$EXISTING_E2E_KEY" \
+      .venv/bin/python -m agent.e2e_setup ${RSTFLAG[@]+"${RSTFLAG[@]}"})"; then
+    echo -e "${RED}E2E setup failed; no service was installed or changed.${NC}"
+    echo "The server must already run with E2E_ENCRYPTION=true (deploy it first), and API_KEY/backend URL must be correct."
+    exit 1
+  fi
+  E2E_KEY="$(printf '%s' "$E2E_KEY" | tr -d '[:space:]')"
+  if [ -z "$E2E_KEY" ]; then
+    echo -e "${RED}E2E setup returned no key; no service was installed or changed.${NC}"
+    exit 1
+  fi
+  E2E_KEY_ENTRY="        <key>AI_REMOTE_E2E_KEY</key>
+        <string>$(xml_escape "$E2E_KEY")</string>"
+elif [ "$ROTATE_PASSPHRASE" = true ]; then
+  echo -e "${RED}--rotate-passphrase needs E2E_ENCRYPTION=true in .env.${NC}"
+  exit 1
+fi
+AI_REMOTE_E2E_XML="$(xml_escape "$E2E_ENABLED")"
+
 echo -e "${BLUE}==> Writing ${PLIST_DEST}${NC}"
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
@@ -154,7 +202,10 @@ cat > "$PLIST_DEST" <<PLIST
         <string>${DEFAULT_AI_XML}</string>
         <key>IMAGE_UPLOAD_ENABLED</key>
         <string>${IMAGE_UPLOAD_ENABLED_XML}</string>
-        <key>PATH</key>
+        <key>AI_REMOTE_E2E</key>
+        <string>${AI_REMOTE_E2E_XML}</string>
+${E2E_KEY_ENTRY:+${E2E_KEY_ENTRY}
+}        <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:${HOME}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>RunAtLoad</key>
