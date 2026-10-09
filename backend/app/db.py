@@ -78,16 +78,53 @@ def _migrate_add_poll_interval_overrides(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _jobs_table_ddl() -> str:
+    import re
+
+    match = re.search(r"CREATE TABLE IF NOT EXISTS jobs \(.*?\n\);", SCHEMA_PATH.read_text(), re.DOTALL)
+    if match is None:  # pragma: no cover - schema.sql is part of this repo
+        raise RuntimeError("jobs definition missing from schema.sql")
+    return match.group(0).replace("IF NOT EXISTS ", "", 1)
+
+
 def _migrate_jobs_check_constraint(conn: sqlite3.Connection) -> None:
-    """SQLite can't alter a CHECK constraint, so a jobs table lacking a job type is rebuilt."""
+    """SQLite can't alter a CHECK constraint, so a jobs table lacking a job type is rebuilt.
+
+    The rebuild is one transaction (DDL is transactional in SQLite), so a crash leaves either
+    the old or the new table. A leftover ``jobs_old`` (from a version that was not atomic) is
+    recovered first: its rows are copied back if missing, then it is dropped.
+    """
+    conn.commit()
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "jobs_old" in tables:
+        conn.execute("BEGIN")
+        try:
+            if "jobs" in tables:
+                old = {r["name"] for r in conn.execute("PRAGMA table_info(jobs_old)")}
+                new = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+                cols = ", ".join(sorted(old & new))
+                conn.execute(f"INSERT OR IGNORE INTO jobs ({cols}) SELECT {cols} FROM jobs_old")
+            else:
+                conn.execute(_jobs_table_ddl())
+                conn.execute("INSERT OR IGNORE INTO jobs SELECT * FROM jobs_old")
+            conn.execute("DROP TABLE jobs_old")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").fetchone()
     if row is None or all(f"'{job_type}'" in row["sql"] for job_type in _JOB_TYPES):
         return
-    conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
-    conn.executescript(SCHEMA_PATH.read_text())
-    conn.execute("INSERT INTO jobs SELECT * FROM jobs_old")
-    conn.execute("DROP TABLE jobs_old")
-    conn.commit()
+    conn.execute("BEGIN")
+    try:
+        conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+        conn.execute(_jobs_table_ddl())
+        conn.execute("INSERT INTO jobs SELECT * FROM jobs_old")
+        conn.execute("DROP TABLE jobs_old")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def get_db_dependency():

@@ -10,6 +10,7 @@ no relative imports, no db/settings.
 import hashlib
 import html as _html
 import re
+import secrets
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
@@ -48,15 +49,18 @@ class ImageContext:
 
 
 _FENCE_RE = re.compile(r"(```.*?```|~~~.*?~~~)", re.DOTALL)
-_TOKEN_RE = re.compile(r"@@IMG(\d+)@@")
 
 
-def _tokenize_images(text: str, refs: list[str]) -> str:
-    """Swaps image markers / bare image paths for tokens, leaving fenced code alone."""
+def _tokenize_images(text: str, refs: list[str], nonce: str) -> str:
+    """Swaps image markers / bare image paths for tokens, leaving fenced code alone.
+
+    The per-call nonce makes tokens unforgeable: text that happens to contain a token-shaped
+    string never matches the regex built from it.
+    """
 
     def token(path: str) -> str:
         refs.append(path)
-        return f"@@IMG{len(refs) - 1}@@"
+        return f"@@IMG{nonce}Z{len(refs) - 1}@@"
 
     parts = _FENCE_RE.split(text)
     for i in range(0, len(parts), 2):
@@ -86,8 +90,9 @@ def _image_html(path: str, ctx: ImageContext) -> str:
 
 def render_markdown(text: str, images: ImageContext | None = None) -> str:
     refs: list[str] = []
+    nonce = secrets.token_hex(8)
     if images is not None:
-        text = _tokenize_images(text or "", refs)
+        text = _tokenize_images(text or "", refs, nonce)
     html = _markdown.markdown(
         text or "", extensions=["fenced_code", "codehilite", "tables"]
     )
@@ -110,7 +115,13 @@ def render_markdown(text: str, images: ImageContext | None = None) -> str:
     wrapped = _wrap_bare_paths(clean)
     if images is None:
         return wrapped
-    return _TOKEN_RE.sub(lambda m: _image_html(refs[int(m.group(1))], images), wrapped)
+    token_re = re.compile(rf"@@IMG{nonce}Z(\d+)@@")
+
+    def restore(m: re.Match) -> str:
+        i = int(m.group(1))
+        return _image_html(refs[i], images) if i < len(refs) else m.group(0)
+
+    return token_re.sub(restore, wrapped)
 
 
 def _wrap_bare_paths(html: str) -> str:

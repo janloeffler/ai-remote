@@ -183,13 +183,20 @@ Ciphertext check: `value.startswith("e2e1:")` and the rest matches `[A-Za-z0-9_-
   possible), mime recorded as `application/octet-stream`, file `<key>.bin`, size cap
   `IMAGE_MAX_BYTES + 32`. In plaintext mode bytes starting with `b"e2e1"` already fail the
   existing magic-number check.
-- In **plaintext** mode the same fields are rejected (422) when they start with `e2e1:` —
-  an E2E agent talking to a plaintext server must never be silently accepted.
+- **Mode declaration, no content sniffing.** The agent sends `X-AI-Remote-E2E: 1` (E2E) or
+  `0` (plaintext) on `POST /sync/index`, `POST /sync/image` and `POST /jobs/{id}/complete`.
+  A plaintext server answers 409 ("agent is in E2E mode but the server is not") when the
+  header is `1`; an E2E server answers 409 when it is `0`. A missing header (legacy agent)
+  is accepted. In plaintext mode content is never inspected — a chat or prompt may
+  legitimately begin with `e2e1:`. Browser prompts/search in plaintext mode have no prefix check.
+- E2E prompt cap: the ciphertext may be up to 171,000 characters (room for 32,000
+  plaintext characters at worst-case 4 UTF-8 bytes each); the browser enforces the
+  32,000-character plaintext limit.
 
 ### Browser endpoints in E2E mode
 
 - `POST /chats/{id}/command` and `POST /projects/command`: `prompt` must be ciphertext
-  (max length 48,000) → else 422. Plaintext mode unchanged (max 32,000).
+  (max length 171,000 characters of ciphertext) → else 422. Plaintext mode unchanged (max 32,000).
 - `POST /search` (new, session auth) `{"query": ciphertext}` → creates job `search`
   (target `*`, payload `{"query": ciphertext}`), returns `{job_id, eta_seconds}`. 409 in
   plaintext mode. Not affected by the remote-command kill switch (read-only, like

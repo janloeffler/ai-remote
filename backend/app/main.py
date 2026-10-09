@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from jinja2 import pass_context
 from fastapi.staticfiles import StaticFiles
@@ -168,9 +168,22 @@ def agent_e2e_params(body: E2EParamsRequest, conn=Depends(db.get_db_dependency))
     return e2e.handshake_payload(conn)
 
 
+def _check_agent_mode(header: str | None) -> None:
+    try:
+        e2e.check_agent_mode(header, settings.E2E_ENCRYPTION)
+    except e2e.ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @app.post("/jobs/{job_id}/complete", dependencies=[Depends(require_api_key)])
-def jobs_complete(job_id: str, body: JobCompleteRequest, conn=Depends(db.get_db_dependency)):
+def jobs_complete(
+    job_id: str,
+    body: JobCompleteRequest,
+    conn=Depends(db.get_db_dependency),
+    x_ai_remote_e2e: str | None = Header(default=None),
+):
     enabled = settings.E2E_ENCRYPTION
+    _check_agent_mode(x_ai_remote_e2e)
     if not all(e2e.valid_content(m.content, enabled) for m in body.messages) or not e2e.valid_content(
         body.result_text, enabled, allow_empty=True
     ):
@@ -248,8 +261,13 @@ def job_status(session_id: str, job_id: str, conn=Depends(db.get_db_dependency))
 
 
 @app.post("/sync/index", dependencies=[Depends(require_api_key)])
-def sync_index(body: SyncIndexRequest, conn=Depends(db.get_db_dependency)):
+def sync_index(
+    body: SyncIndexRequest,
+    conn=Depends(db.get_db_dependency),
+    x_ai_remote_e2e: str | None = Header(default=None),
+):
     enabled = settings.E2E_ENCRYPTION
+    _check_agent_mode(x_ai_remote_e2e)
     for session in body.sessions:
         fields = [session.title, session.last_message_preview, *(m.content for m in session.recent_messages)]
         if not all(e2e.valid_content(f, enabled) for f in fields):
@@ -266,7 +284,12 @@ def sync_index(body: SyncIndexRequest, conn=Depends(db.get_db_dependency)):
 
 
 @app.post("/sync/image", dependencies=[Depends(require_api_key)])
-def sync_image(body: ImageUploadRequest, conn=Depends(db.get_db_dependency)):
+def sync_image(
+    body: ImageUploadRequest,
+    conn=Depends(db.get_db_dependency),
+    x_ai_remote_e2e: str | None = Header(default=None),
+):
+    _check_agent_mode(x_ai_remote_e2e)
     if not settings.IMAGE_UPLOAD_ENABLED:
         raise HTTPException(status_code=403, detail="image upload is disabled")
     if _get_visible_session(conn, body.session_id) is None:
@@ -369,7 +392,7 @@ def logout(request: Request):
 
 
 def _check_prompt(text: str) -> None:
-    """E2E: ciphertext only (up to the model's 48,000 chars). Plaintext keeps its 32,000 cap."""
+    """E2E: ciphertext only (cap on the ciphertext, sized for 32,000 plaintext characters). Plaintext keeps its 32,000 cap."""
     if settings.E2E_ENCRYPTION:
         ok = e2e.is_ciphertext(text)
     else:

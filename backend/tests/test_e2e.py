@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -265,17 +266,46 @@ def test_e2e_complete_validation(enc, env):
     conn.close()
 
 
-def test_plain_mode_rejects_ciphertext(plain, env):
-    s = session()
-    s["title"] = ct()
-    assert sync(plain, s).status_code == 422
-    s = session()
-    s["recent_messages"][0]["content"] = ct()
-    assert sync(plain, s).status_code == 422
-    assert sync(plain, session()).status_code == 200
+def test_plain_mode_accepts_content_starting_with_e2e1(plain, env):
+    s = session(title="e2e1: what is this", last_message_preview="e2e1: preview")
+    s["recent_messages"][0]["content"] = "e2e1: what is this"
+    assert sync(plain, s).status_code == 200
     jid = db.create_job(raw_conn(env), "fetch_full", SID)
-    assert plain.post(f"/jobs/{jid}/complete", headers=KEY, json={"status": "done", "result_text": ct()}).status_code == 422
-    assert plain.post(f"/jobs/{jid}/complete", headers=KEY, json={"status": "done", "result_text": "ok"}).status_code == 200
+    r = plain.post(f"/jobs/{jid}/complete", headers=KEY, json={
+        "status": "done", "result_text": "e2e1: result",
+        "messages": [{"idx": 0, "role": "user", "timestamp": "t", "content": "e2e1: " + "A" * 60}]})
+    assert r.status_code == 200
+    assert plain.post(f"/chats/{SID}/command", json={"prompt": "e2e1: what is this"}).status_code == 200
+    assert plain.post(f"/chats/{SID}/command", json={"prompt": ct()}).status_code == 200
+
+
+def test_mode_header_mismatch_is_409_in_plain(plain, env):
+    h1 = {**KEY, "X-AI-Remote-E2E": "1"}
+    assert plain.post("/sync/index", headers=h1, json={"sessions": [session()]}).status_code == 409
+    r = plain.post("/sync/index", headers=h1, json={"sessions": [session()]})
+    assert "E2E mode but the server is not" in r.json()["detail"]
+    jid = db.create_job(raw_conn(env), "fetch_full", SID)
+    assert plain.post(f"/jobs/{jid}/complete", headers=h1, json={"status": "done"}).status_code == 409
+    assert plain.post("/sync/image", headers=h1, json={"session_id": SID, "path": "/a.png", "data_b64": ""}).status_code == 409
+    h0 = {**KEY, "X-AI-Remote-E2E": "0"}
+    assert plain.post("/sync/index", headers=h0, json={"sessions": [session()]}).status_code == 200
+    assert plain.post(f"/jobs/{jid}/complete", headers=h0, json={"status": "done"}).status_code == 200
+
+
+def test_mode_header_mismatch_is_409_in_e2e(enc, env):
+    h0 = {**KEY, "X-AI-Remote-E2E": "0"}
+    assert enc.post("/sync/index", headers=h0, json={"sessions": [session(enc=True)]}).status_code == 409
+    jid = db.create_job(raw_conn(env), "fetch_full", SID)
+    assert enc.post(f"/jobs/{jid}/complete", headers=h0, json={"status": "done"}).status_code == 409
+    assert enc.post("/sync/image", headers=h0, json={"session_id": SID, "path": "/a.png", "data_b64": ""}).status_code == 409
+    h1 = {**KEY, "X-AI-Remote-E2E": "1"}
+    assert enc.post("/sync/index", headers=h1, json={"sessions": [session(enc=True)]}).status_code == 200
+    assert enc.post(f"/jobs/{jid}/complete", headers=h1, json={"status": "done"}).status_code == 200
+
+
+def test_e2e_mode_still_rejects_plaintext_with_header(enc):
+    h1 = {**KEY, "X-AI-Remote-E2E": "1"}
+    assert enc.post("/sync/index", headers=h1, json={"sessions": [session()]}).status_code == 422
 
 
 def test_plain_mode_still_uses_fts(plain):
@@ -345,7 +375,7 @@ def test_search_job(enc, env):
     job = db.get_job(raw_conn(env), r.json()["job_id"])
     assert job["type"] == "search" and job["target"] == "*"
     assert enc.post("/search", json={"query": "plain"}).status_code == 422
-    assert enc.post("/search", json={"query": "e2e1:" + "A" * 48000}).status_code == 422
+    assert enc.post("/search", json={"query": "e2e1:" + "A" * 171_000}).status_code == 422
     assert enc.post("/search", json={}).status_code == 422
 
 
@@ -364,7 +394,7 @@ def test_search_plain_409_and_auth(plain):
 
 
 def test_search_max_length_boundary(enc):
-    ok = "e2e1:" + "A" * (48000 - 5)
+    ok = "e2e1:" + "A" * (171_000 - 5)
     assert enc.post("/search", json={"query": ok}).status_code == 200
 
 
@@ -396,7 +426,7 @@ def test_e2e_prompts_need_ciphertext(enc):
     sync(enc, session(enc=True))
     assert enc.post(f"/chats/{SID}/command", json={"prompt": "plain"}).status_code == 422
     assert enc.post(f"/chats/{SID}/command", json={"prompt": ct()}).status_code == 200
-    big = "e2e1:" + "A" * (48000 - 5)
+    big = "e2e1:" + "A" * (171_000 - 5)
     assert enc.post(f"/chats/{SID}/command", json={"prompt": big}).status_code == 200
     assert enc.post(f"/chats/{SID}/command", json={"prompt": big + "A"}).status_code == 422
     body = {"project_path": "/p", "tool": "claude-code"}
@@ -545,3 +575,100 @@ def test_js_strings_present_in_both_languages():
             assert cat[f"js.e2e.{k}"]
     assert i18n.CATALOGS["de"]["js.e2e.unlock"] != i18n.CATALOGS["en"]["js.e2e.unlock"]
     assert i18n.CATALOGS["de"]["list.search_clear"] != i18n.CATALOGS["en"]["list.search_clear"]
+
+
+# --- wipe verification, atomic rotation, jobs migration -----------------------------
+
+def test_wipe_raises_while_a_reader_blocks_the_checkpoint(env, monkeypatch):
+    monkeypatch.setattr(e2e, "CHECKPOINT_BACKOFF_SECONDS", 0.01)
+    c = raw_conn(env)
+    db.init_db(c)
+    c.execute("INSERT INTO sessions (id, tool, title, created_at, last_updated_at) VALUES ('x','cursor','t','a','b')")
+    c.commit()
+    reader = raw_conn(env)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM sessions").fetchone()
+    with pytest.raises(RuntimeError, match="checkpoint"):
+        e2e.wipe_content(c)
+    reader.rollback()
+    reader.close()
+    e2e.wipe_content(c)
+    wal = env / "test.db-wal"
+    assert not wal.exists() or wal.stat().st_size == 0
+    c.close()
+
+
+def test_wipe_drops_leftover_jobs_old(conn):
+    conn.execute("CREATE TABLE jobs_old (id TEXT)")
+    e2e.wipe_content(conn)
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'jobs_old'").fetchone() is None
+
+
+def test_reset_changes_params_and_epoch_in_one_update(conn, monkeypatch):
+    conn.execute("UPDATE e2e_state SET mode = 'e2e'")
+    e2e.set_params(conn, SALT, KDF, CHECK)
+    epoch = e2e.get_state(conn)["epoch"]
+    seen = []
+    real = e2e.wipe_content
+    monkeypatch.setattr(e2e, "wipe_content", lambda c: (real(c), seen.append(e2e.get_state(c)))[0])
+    e2e.set_params(conn, SALT, KDF, "cd" * 32, reset=True)
+    # after the wipe (before the UPDATE) the old epoch and old key_check are still paired
+    assert seen[0]["epoch"] == epoch and seen[0]["key_check"] == CHECK
+    state = e2e.get_state(conn)
+    assert state["epoch"] != epoch and state["key_check"] == "cd" * 32
+
+
+def test_get_state_is_read_only(conn):
+    before = conn.total_changes
+    e2e.get_state(conn)
+    e2e.get_state(conn)
+    assert conn.total_changes == before
+
+
+def test_get_state_creates_row_if_missing(conn):
+    conn.execute("DELETE FROM e2e_state")
+    conn.commit()
+    assert e2e.get_state(conn)["mode"] == "plain"
+
+
+OLD_JOBS = (
+    "CREATE TABLE {name} (id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN "
+    "('fetch_full','resume_message','new_session')), target TEXT NOT NULL, "
+    "payload TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN "
+    "('pending','running','done','failed')), result_text TEXT, created_at TEXT NOT NULL, completed_at TEXT);"
+)
+
+
+def test_jobs_migration_is_atomic(tmp_path, monkeypatch):
+    c = db.get_connection(str(tmp_path / "a.db"))
+    c.executescript(OLD_JOBS.format(name="jobs") + "INSERT INTO jobs (id,type,target,created_at) VALUES ('j1','fetch_full','s','x');")
+    c.commit()
+    monkeypatch.setattr(db, "_jobs_table_ddl", lambda: "CREATE TABLE jobs (broken syntax")
+    with pytest.raises(sqlite3.OperationalError):
+        db._migrate_jobs_check_constraint(c)
+    names = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "jobs" in names and "jobs_old" not in names
+    assert c.execute("SELECT id FROM jobs").fetchone()["id"] == "j1"
+    c.close()
+
+
+def test_jobs_migration_recovers_leftover_jobs_old(tmp_path):
+    c = db.get_connection(str(tmp_path / "b.db"))
+    # crashed after rename+create: new empty jobs, old rows stranded in jobs_old
+    c.executescript(OLD_JOBS.format(name="jobs_old") + "INSERT INTO jobs_old (id,type,target,created_at) VALUES ('j1','fetch_full','s','x'),('j2','resume_message','s','x');")
+    db.init_db(c)
+    c.execute("INSERT OR IGNORE INTO jobs (id,type,target,created_at) VALUES ('j2','search','*','y')")
+    assert {r["id"] for r in c.execute("SELECT id FROM jobs")} == {"j1", "j2"}
+    assert c.execute("SELECT 1 FROM sqlite_master WHERE name = 'jobs_old'").fetchone() is None
+    c.close()
+
+
+def test_jobs_migration_recovers_when_jobs_is_old_schema_too(tmp_path):
+    c = db.get_connection(str(tmp_path / "c.db"))
+    c.executescript(OLD_JOBS.format(name="jobs") + OLD_JOBS.format(name="jobs_old") +
+                    "INSERT INTO jobs_old (id,type,target,created_at) VALUES ('j1','fetch_full','s','x');")
+    c.commit()
+    db._migrate_jobs_check_constraint(c)
+    assert c.execute("SELECT id FROM jobs").fetchone()["id"] == "j1"
+    assert "'search'" in c.execute("SELECT sql FROM sqlite_master WHERE name='jobs'").fetchone()["sql"]
+    c.close()

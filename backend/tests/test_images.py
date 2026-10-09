@@ -194,3 +194,31 @@ def test_unclaimed_job_fails_after_its_timeout_when_the_page_polls(client):
     conn.commit()
     conn.close()
     assert client.get(f"/chats/{SID}/status?job_id={job_id}").json()["status"] == "failed"
+
+
+def test_markdown_forged_image_tokens_do_not_raise_and_stay_literal():
+    ctx = ImageContext(session_id=SID)
+    for text in ("x @@IMG5@@ y", "x @@IMG0@@ y", "@@IMGdeadbeefdeadbeefZ7@@", "@@IMG0Z0@@ see ~/shots/b.png"):
+        html = render_markdown(text, ctx)
+        assert text.split()[0] in html or "@@IMG" in html
+    assert "@@IMG5@@" in render_markdown("x @@IMG5@@ y", ctx)
+    html = render_markdown("@@IMG0@@ see ~/shots/b.png", ctx)
+    assert "@@IMG0@@" in html and html.count('class="image-fetch"') == 1
+
+
+def test_markdown_token_nonce_is_per_call():
+    import re
+    from app import render_core
+
+    seen = []
+    orig = render_core._tokenize_images
+    def spy(text, refs, nonce):
+        seen.append(nonce)
+        return orig(text, refs, nonce)
+    render_core._tokenize_images = spy
+    try:
+        render_markdown("~/a.png", ImageContext(session_id=SID))
+        render_markdown("~/a.png", ImageContext(session_id=SID))
+    finally:
+        render_core._tokenize_images = orig
+    assert seen[0] != seen[1] and all(re.fullmatch(r"[0-9a-f]{16}", n) for n in seen)
