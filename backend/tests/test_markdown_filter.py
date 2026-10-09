@@ -64,3 +64,12 @@ def test_lone_tilde_without_path_is_not_wrapped():
     html = render_markdown("use ~ for home, or ~/source/x for a real path")
     assert "<code>~</code>" not in html
     assert "<code>~/source/x</code>" in html
+
+
+def test_table_column_alignment_is_kept_as_class():
+    md = "| A | B | C |\n|:--|--:|:-:|\n| 1 | 2 | 3 |\n"
+    html = render_markdown(md)
+    assert '<th class="align-left">A</th>' in html
+    assert '<td class="align-right">2</td>' in html
+    assert '<td class="align-center">3</td>' in html
+    assert "style=" not in html

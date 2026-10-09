@@ -231,6 +231,38 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 pre, table { overflow-x: auto; max-width: 100%; }
 table { display: block; }
+.message-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.message-content th, .message-content td {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.message-content tbody tr:last-child td { border-bottom: 0; }
+.message-content thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-hover);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.message-content tbody tr:nth-child(even) { background: var(--surface-hover); }
+.message-content tbody tr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.message-content .align-left { text-align: left; }
+.message-content .align-right, .message-content .num { text-align: right; font-variant-numeric: tabular-nums; }
+.message-content .align-center { text-align: center; }
+.message-content th.sortable { cursor: pointer; user-select: none; }
+.message-content th.sortable:hover { color: var(--accent); }
+.message-content th.sortable::after { content: ""; display: inline-block; width: 1em; margin-left: 0.25rem; }
+.message-content th[aria-sort="ascending"]::after { content: "▲"; font-size: 0.7em; }
+.message-content th[aria-sort="descending"]::after { content: "▼"; font-size: 0.7em; }
 .message p, .message li { max-width: 75ch; }
 
 .history-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }

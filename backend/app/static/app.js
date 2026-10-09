@@ -473,3 +473,92 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!button) return;
   button.addEventListener("click", () => location.reload());
 });
+
+// Message tables: click a header to sort (asc → desc → original order), frontend-only.
+// Numeric columns (incl. %, currency, thousands separators) are right-aligned and
+// sorted numerically; everything else sorts as text with natural/locale ordering.
+document.addEventListener("DOMContentLoaded", () => {
+  const parseNumber = (raw) => {
+    let text = raw.trim().replace(/[\s\u00a0%€$£]/g, "");
+    if (!/^[-+−]?[\d.,]*\d[\d.,]*$/.test(text)) return null;
+    text = text.replace("−", "-");
+    const lastComma = text.lastIndexOf(",");
+    const lastDot = text.lastIndexOf(".");
+    if (lastComma > -1 && lastDot > -1) {
+      // The later separator is the decimal one.
+      text = lastComma > lastDot ? text.replace(/\./g, "").replace(",", ".") : text.replace(/,/g, "");
+    } else if (lastComma > -1) {
+      text = /^[-+]?\d{1,3}(,\d{3})+$/.test(text) ? text.replace(/,/g, "") : text.replace(",", ".");
+    } else if (/^[-+]?\d{1,3}(\.\d{3}){2,}$/.test(text)) {
+      text = text.replace(/\./g, "");
+    }
+    const value = Number(text);
+    return Number.isFinite(value) ? value : null;
+  };
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+  document.querySelectorAll(".message-content table").forEach((table) => {
+    const headRow = table.tHead && table.tHead.rows[0];
+    const body = table.tBodies[0];
+    if (!headRow || !body) return;
+    const rows = [...body.rows];
+    const originalOrder = rows.slice();
+    const headers = [...headRow.cells];
+
+    const columns = headers.map((_, index) => {
+      const values = rows.map((row) => (row.cells[index] ? row.cells[index].textContent : ""));
+      const filled = values.filter((v) => v.trim() !== "");
+      const numbers = values.map(parseNumber);
+      const numeric = filled.length > 0 && filled.every((v) => parseNumber(v) !== null);
+      return { numeric, numbers };
+    });
+
+    columns.forEach((column, index) => {
+      if (!column.numeric) return;
+      headers[index].classList.add("num");
+      rows.forEach((row) => row.cells[index] && row.cells[index].classList.add("num"));
+    });
+
+    const sortBy = (index, direction) => {
+      headers.forEach((h, i) => {
+        if (i === index && direction) h.setAttribute("aria-sort", direction);
+        else h.removeAttribute("aria-sort");
+      });
+      let ordered = originalOrder;
+      if (direction) {
+        const sign = direction === "ascending" ? 1 : -1;
+        const column = columns[index];
+        const key = (row) => (row.cells[index] ? row.cells[index].textContent.trim() : "");
+        ordered = rows.slice().sort((a, b) => {
+          if (column.numeric) {
+            const na = column.numbers[rows.indexOf(a)];
+            const nb = column.numbers[rows.indexOf(b)];
+            if (na === null && nb === null) return 0;
+            if (na === null) return 1;
+            if (nb === null) return -1;
+            return sign * (na - nb);
+          }
+          return sign * collator.compare(key(a), key(b));
+        });
+      }
+      ordered.forEach((row) => body.appendChild(row));
+    };
+
+    headers.forEach((header, index) => {
+      header.classList.add("sortable");
+      header.tabIndex = 0;
+      header.setAttribute("role", "columnheader");
+      const toggle = () => {
+        const current = header.getAttribute("aria-sort");
+        sortBy(index, current === "ascending" ? "descending" : current === "descending" ? null : "ascending");
+      };
+      header.addEventListener("click", toggle);
+      header.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
+      });
+    });
+  });
+});

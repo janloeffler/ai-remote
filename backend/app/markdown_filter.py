@@ -5,6 +5,7 @@ import markdown as _markdown
 from bs4 import BeautifulSoup, NavigableString
 
 _PATH_RE = re.compile(r"(?<![\w`/])(/(?:[\w.\-]+/)*[\w.\-]+|~(?:/[\w.\-]+)+)")
+_ALIGN_RE = re.compile(r'<(th|td) style="text-align: (left|right|center);">')
 _SKIP_ANCESTORS = {"code", "pre", "a"}
 
 
@@ -12,6 +13,7 @@ def render_markdown(text: str) -> str:
     html = _markdown.markdown(
         text or "", extensions=["fenced_code", "codehilite", "tables"]
     )
+    html = _ALIGN_RE.sub(r'<\1 class="align-\2">', html)
     allowed_tags = {
         "p", "br", "strong", "em", "code", "pre", "blockquote",
         "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -23,6 +25,8 @@ def render_markdown(text: str) -> str:
         "span": ["class"],
         "pre": ["class"],
         "div": ["class"],
+        "th": ["class"],
+        "td": ["class"],
     }
     clean = bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
     return _wrap_bare_paths(clean)
