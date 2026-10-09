@@ -10,13 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import allowlist, db, i18n, rate_limit, settings
+from . import ai_tools, allowlist, db, i18n, rate_limit, settings
 from .auth import require_api_key, require_session, secrets_match, session_binding
 from .datetime_filter import format_datetime
 from .markdown_filter import render_markdown
 from .models import CommandRequest, JobCompleteRequest, NewSessionCommandRequest, SyncIndexRequest
 
 APP_DIR = Path(__file__).parent
+TOOL_LABELS = {ai_tools.CLAUDE_CODE: "Claude Code", ai_tools.CURSOR: "Cursor"}
 
 # No interactive docs: they were served unauthenticated (SEC-011), handing any visitor
 # the full route map — including the agent-only endpoints and their auth scheme — for a
@@ -61,7 +62,16 @@ def _js_strings(context) -> dict:
     return i18n.js_catalog(context["request"].state.lang)
 
 
+@pass_context
+def _ai_tools_error(context) -> str | None:
+    if settings.ENABLED_TOOLS:
+        return None
+    return i18n.translate(context["request"].state.lang, "tools.none_enabled")
+
+
 templates.env.globals["t"] = _t
+templates.env.globals["ai_tools_error"] = _ai_tools_error
+templates.env.globals["tool_label"] = lambda tool: TOOL_LABELS.get(tool, tool)
 templates.env.globals["js_strings"] = _js_strings
 templates.env.filters["localdt"] = _localdt
 templates.env.globals["build_timestamp"] = os.environ.get("BUILD_TIMESTAMP", "dev")
@@ -119,7 +129,7 @@ def fetch_full(session_id: str, full: bool = False, conn=Depends(db.get_db_depen
     # Only ever queue a job for a session we actually know about: the target string is
     # handed to the agent, which turns it into a filesystem lookup, so this route must
     # not be a way to inject arbitrary target strings into that path (SEC-005).
-    session = db.get_session(conn, session_id)
+    session = _get_visible_session(conn, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     if full:
@@ -145,11 +155,15 @@ def job_status(session_id: str, job_id: str, conn=Depends(db.get_db_dependency))
 
 @app.post("/sync/index", dependencies=[Depends(require_api_key)])
 def sync_index(body: SyncIndexRequest, conn=Depends(db.get_db_dependency)):
+    received = 0
     for session in body.sessions:
+        if session.tool not in settings.ENABLED_TOOLS:
+            continue
+        received += 1
         db.upsert_session(conn, session.model_dump(exclude={"recent_messages"}))
         db.apply_recent_messages(conn, session.id, [m.model_dump() for m in session.recent_messages])
     db.record_agent_contact(conn)
-    return {"received": len(body.sessions)}
+    return {"received": received}
 
 
 @app.get("/login")
@@ -197,6 +211,14 @@ def _expand_home_dir(value: str) -> str:
     return value
 
 
+def _get_visible_session(conn, session_id: str) -> dict | None:
+    """A session of a disabled tool is treated as nonexistent everywhere it could surface."""
+    session = db.get_session(conn, session_id)
+    if session is not None and session["tool"] not in settings.ENABLED_TOOLS:
+        return None
+    return session
+
+
 @app.get("/", dependencies=[Depends(require_session)])
 def list_chats(
     request: Request,
@@ -210,7 +232,7 @@ def list_chats(
 ):
     expanded_project = _expand_home_dir(project) if project else project
     sessions = db.get_sessions(
-        conn, tool=tool, project=expanded_project, date_group=group, q=q, limit=limit, sort=sort
+        conn, tool=tool, tools=settings.ENABLED_TOOLS, project=expanded_project, date_group=group, q=q, limit=limit, sort=sort
     )
     poll_mode, poll_interval_seconds = _poll_mode(conn)
     return templates.TemplateResponse(
@@ -224,7 +246,8 @@ def list_chats(
             "q": q,
             "sort": sort,
             "last_agent_contact": db.get_last_agent_contact(conn),
-            "project_paths": db.get_distinct_project_paths(conn),
+            "project_paths": db.get_distinct_project_paths(conn, settings.ENABLED_TOOLS),
+            "enabled_tools": settings.ENABLED_TOOLS,
             "local_home_dir": settings.LOCAL_HOME_DIR,
             "remote_commands_paused": db.get_remote_commands_paused(conn),
             "poll_mode": poll_mode,
@@ -337,7 +360,7 @@ def settings_save(
 
 @app.get("/chats/{session_id}", dependencies=[Depends(require_session)])
 def chat_detail(request: Request, session_id: str, conn=Depends(db.get_db_dependency)):
-    session = db.get_session(conn, session_id)
+    session = _get_visible_session(conn, session_id)
     poll_mode, poll_interval_seconds = _poll_mode(conn)
     if session is None:
         return templates.TemplateResponse(
@@ -369,7 +392,7 @@ def chat_detail(request: Request, session_id: str, conn=Depends(db.get_db_depend
 
 @app.post("/chats/{session_id}/command", dependencies=[Depends(require_session)])
 def send_command(session_id: str, body: CommandRequest, conn=Depends(db.get_db_dependency)):
-    session = db.get_session(conn, session_id)
+    session = _get_visible_session(conn, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     if db.get_remote_commands_paused(conn):
@@ -396,6 +419,8 @@ def new_session_form(request: Request, conn=Depends(db.get_db_dependency)):
         "new_session.html",
         {
             "allowed_projects": settings.ALLOWED_PROJECTS,
+            "enabled_tools": settings.ENABLED_TOOLS,
+            "default_tool": settings.DEFAULT_TOOL,
             "remote_commands_paused": db.get_remote_commands_paused(conn),
             "poll_mode": poll_mode,
             "poll_interval_seconds": poll_interval_seconds,
@@ -407,6 +432,8 @@ def new_session_form(request: Request, conn=Depends(db.get_db_dependency)):
 def send_new_session_command(body: NewSessionCommandRequest, conn=Depends(db.get_db_dependency)):
     if db.get_remote_commands_paused(conn):
         raise HTTPException(status_code=409, detail="remote commands are paused")
+    if body.tool not in settings.ENABLED_TOOLS:
+        raise HTTPException(status_code=403, detail="tool is disabled")
     if not allowlist.is_allowed(body.project_path):
         raise HTTPException(status_code=403, detail="project path is not allow-listed")
     job_id = db.create_job(

@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ t('new.title') }}</h1>
-{% if not allowed_projects %}
+{% if not enabled_tools %}
+<p>{{ ai_tools_error() }}</p>
+{% elif not allowed_projects %}
 <p>{{ t('new.no_projects') }}</p>
 {% else %}
 <form id="new-session-form">
@@ -11,10 +13,15 @@
     <option value="{{ path }}">{{ path }}</option>
     {% endfor %}
   </select>
+  {% if enabled_tools | length > 1 %}
   <select name="tool" aria-label="Tool">
-    <option value="claude-code">Claude Code</option>
-    <option value="cursor">Cursor</option>
+    {% for tool in enabled_tools %}
+    <option value="{{ tool }}" {% if tool == default_tool %}selected{% endif %}>{{ tool_label(tool) }}</option>
+    {% endfor %}
   </select>
+  {% else %}
+  <input type="hidden" name="tool" value="{{ default_tool }}">
+  {% endif %}
   <div class="prompt-row">
     <textarea name="prompt" placeholder="{{ t('new.prompt') }}" required></textarea>
     <button type="button" class="mic-button" aria-label="{{ t('common.voice') }}" hidden>🎤</button>

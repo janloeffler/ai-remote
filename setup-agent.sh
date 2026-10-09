@@ -103,6 +103,9 @@ xml_escape() {
 API_KEY_XML="$(xml_escape "$API_KEY")"
 BACKEND_URL_XML="$(xml_escape "$BACKEND_URL")"
 ALLOWED_PROJECTS_XML="$(xml_escape "${AI_REMOTE_ALLOWED_PROJECTS:-}")"
+CLAUDE_CODE_ENABLED_XML="$(xml_escape "${CLAUDE_CODE_ENABLED:-true}")"
+CURSOR_ENABLED_XML="$(xml_escape "${CURSOR_ENABLED:-true}")"
+DEFAULT_AI_XML="$(xml_escape "${DEFAULT_AI:-claude}")"
 
 echo -e "${BLUE}==> Writing ${PLIST_DEST}${NC}"
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
@@ -142,6 +145,12 @@ cat > "$PLIST_DEST" <<PLIST
         <string>${API_KEY_XML}</string>
         <key>AI_REMOTE_ALLOWED_PROJECTS</key>
         <string>${ALLOWED_PROJECTS_XML}</string>
+        <key>CLAUDE_CODE_ENABLED</key>
+        <string>${CLAUDE_CODE_ENABLED_XML}</string>
+        <key>CURSOR_ENABLED</key>
+        <string>${CURSOR_ENABLED_XML}</string>
+        <key>DEFAULT_AI</key>
+        <string>${DEFAULT_AI_XML}</string>
         <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:${HOME}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>

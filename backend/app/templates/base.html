@@ -67,6 +67,9 @@
   {% if remote_commands_paused %}
   <div class="paused-banner">{{ t('pause.banner') }}</div>
   {% endif %}
+  {% if ai_tools_error() %}
+  <div class="paused-banner" role="alert">{{ ai_tools_error() }}</div>
+  {% endif %}
   <main>{% block content %}{% endblock %}</main>
   <footer class="build-info">{{ t('footer.version', ts=build_timestamp) }}</footer>
   <script type="application/json" id="i18n-data">{{ js_strings() | tojson }}</script>

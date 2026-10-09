@@ -12,11 +12,14 @@
            aria-expanded="false" aria-autocomplete="list" aria-controls="project-listbox">
     <ul id="project-listbox" class="combobox-listbox" role="listbox" hidden></ul>
   </div>
+  {% if enabled_tools | length > 1 %}
   <select name="tool">
     <option value="">{{ t('list.all_tools') }}</option>
-    <option value="claude-code" {% if tool == "claude-code" %}selected{% endif %}>Claude Code</option>
-    <option value="cursor" {% if tool == "cursor" %}selected{% endif %}>Cursor</option>
+    {% for t_id in enabled_tools %}
+    <option value="{{ t_id }}" {% if tool == t_id %}selected{% endif %}>{{ tool_label(t_id) }}</option>
+    {% endfor %}
   </select>
+  {% endif %}
   <select name="group">
     <option value="">{{ t('list.group.all') }}</option>
     <option value="today" {% if group == "today" %}selected{% endif %}>{{ t('list.group.today') }}</option>

@@ -3,13 +3,19 @@ import time
 
 import httpx
 
-from . import claude_code_source, cursor_source, executor, jobs, state, uploader
+from . import ai_tools, claude_code_source, cursor_source, executor, jobs, state, uploader
 from .config import Config, load_config
 
 
 def run_cycle(config: Config, client: httpx.Client) -> int | None:
-    claude_sessions = claude_code_source.list_claude_code_sessions()
-    cursor_sessions = cursor_source.list_cursor_sessions()
+    if not config.enabled_tools:
+        print(ai_tools.NONE_ENABLED_MESSAGE, file=sys.stderr)
+        return None
+
+    claude_sessions = (
+        claude_code_source.list_claude_code_sessions() if ai_tools.CLAUDE_CODE in config.enabled_tools else []
+    )
+    cursor_sessions = cursor_source.list_cursor_sessions() if ai_tools.CURSOR in config.enabled_tools else []
 
     synced = state.load_synced_ids(config.state_path)
 
@@ -35,11 +41,11 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
     for job in pending_jobs:
         try:
             if job["type"] == "fetch_full":
-                result = executor.execute_fetch_full(job)
+                result = executor.execute_fetch_full(job, config.enabled_tools)
             elif job["type"] == "resume_message":
-                result = executor.execute_resume_message(job, config.allowed_projects)
+                result = executor.execute_resume_message(job, config.allowed_projects, config.enabled_tools)
             elif job["type"] == "new_session":
-                result = executor.execute_new_session(job, config.allowed_projects)
+                result = executor.execute_new_session(job, config.allowed_projects, config.enabled_tools)
             else:
                 result = {"status": "failed", "result_text": f"job type {job['type']} not supported in this version"}
             jobs.report_job_result(

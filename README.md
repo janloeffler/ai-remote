@@ -97,6 +97,9 @@ via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
 | `AI_REMOTE_ACTIVE_INTERVAL_SECONDS` | `10` | backend | Poll interval during an active window. Can be overridden at runtime under **Settings**. |
 | `ACTIVE_INTERVAL_DURATION_MIN` | `5` | backend | How long an active window lasts after any authenticated request from the phone (navigating, filtering, or a job-creating action). |
 | `AI_REMOTE_ALLOWED_PROJECTS` | *(empty = disabled)* | backend, agent | Comma-separated absolute project paths where remote commands may run. Must be set identically on both sides — two independently-checked copies, not synced automatically. |
+| `CLAUDE_CODE_ENABLED` | `true` | backend, agent | `false` hides Claude Code everywhere (list, filter, new session) and stops the agent from polling it. |
+| `CURSOR_ENABLED` | `true` | backend, agent | Same for Cursor. |
+| `DEFAULT_AI` | `claude` | backend | `claude` or `cursor`: preselected tool for new sessions. With only one tool enabled that tool is used regardless. If both tools are disabled the UI shows an error and the agent idles. |
 | `TRUSTED_PROXY_HOPS` | `0` | backend | Number of reverse-proxy hops to trust when reading `X-Forwarded-For` for login-throttle bucketing. Must be set together with `TRUSTED_PROXIES` — the backend fails fast at startup if only one is set. |
 | `TRUSTED_PROXIES` | *(empty)* | backend | Comma-separated peer addresses of your trusted reverse proxy. Required if `TRUSTED_PROXY_HOPS > 0`. |
 | `ENABLE_API_DOCS` | `false` | backend (`main.py`) | Set to `true` to serve `/docs` and `/openapi.json`. Disabled by default in production. |

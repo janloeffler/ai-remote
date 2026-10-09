@@ -1,5 +1,7 @@
 import os
 
+from . import ai_tools
+
 
 def _require_env(name: str, min_length: int = 32) -> str:
     """Fails fast at import when a required secret is absent or too short.
@@ -71,3 +73,7 @@ ALLOWED_PROJECTS = [
 # turning the agent into a request flood against the backend.
 STANDARD_INTERVAL_RANGE = (10, 3600)
 ACTIVE_INTERVAL_RANGE = (5, 300)
+
+# Tool switches. None enabled is not fatal: the UI shows an error instead, so the
+# operator sees what to fix rather than a container that restart-loops.
+ENABLED_TOOLS, DEFAULT_TOOL = ai_tools.load()

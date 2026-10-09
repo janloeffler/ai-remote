@@ -330,3 +330,27 @@ def test_prompt_at_the_limit_is_accepted(logged_in_client):
         "/chats/claude-code:abc/command", json={"prompt": "x" * PROMPT_MAX_LENGTH}
     )
     assert response.status_code == 200
+
+
+def test_disabled_tool_hidden_and_rejected(logged_in_client, monkeypatch):
+    from app import db, settings
+
+    monkeypatch.setattr(settings, "ENABLED_TOOLS", ("claude-code",))
+    monkeypatch.setattr(settings, "DEFAULT_TOOL", "claude-code")
+    resp = logged_in_client.post(
+        "/projects/command",
+        json={"project_path": "/Users/jan/source/demo", "tool": "cursor", "prompt": "hi"},
+    )
+    assert resp.status_code == 403
+    page = logged_in_client.get("/projects/new")
+    assert 'value="claude-code"' in page.text and "Cursor" not in page.text
+    assert "Cursor" not in logged_in_client.get("/").text
+
+
+def test_all_tools_disabled_shows_error(logged_in_client, monkeypatch):
+    from app import settings
+
+    monkeypatch.setattr(settings, "ENABLED_TOOLS", ())
+    monkeypatch.setattr(settings, "DEFAULT_TOOL", None)
+    assert "CLAUDE_CODE_ENABLED" in logged_in_client.get("/").text
+    assert "CLAUDE_CODE_ENABLED" in logged_in_client.get("/projects/new").text

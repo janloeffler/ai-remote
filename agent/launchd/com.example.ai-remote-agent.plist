@@ -18,6 +18,12 @@
         <string>https://your-domain.example.com</string>
         <key>AI_REMOTE_API_KEY</key>
         <string>REPLACE_WITH_REAL_API_KEY</string>
+        <key>CLAUDE_CODE_ENABLED</key>
+        <string>true</string>
+        <key>CURSOR_ENABLED</key>
+        <string>true</string>
+        <key>DEFAULT_AI</key>
+        <string>claude</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

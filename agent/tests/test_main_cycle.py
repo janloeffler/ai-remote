@@ -20,7 +20,7 @@ def test_run_cycle_pushes_deltas_and_executes_pending_jobs(tmp_path, monkeypatch
     def fake_fetch_pending_jobs(base_url, api_key, client):
         return {"jobs": [{"id": "j1", "type": "fetch_full", "target": "claude-code:abc"}], "poll_interval_seconds": 60}
 
-    def fake_execute_fetch_full(job):
+    def fake_execute_fetch_full(job, enabled_tools):
         return {"status": "done", "result_text": "", "messages": []}
 
     def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False):
@@ -107,7 +107,7 @@ def test_run_cycle_continues_after_job_failure(tmp_path, monkeypatch):
             "poll_interval_seconds": 60,
         }
 
-    def fake_execute_fetch_full(job):
+    def fake_execute_fetch_full(job, enabled_tools):
         return {"status": "done", "result_text": "", "messages": []}
 
     def fake_report_job_result(base_url, api_key, job_id, status, client, result_text="", messages=None, is_complete=False):
@@ -152,11 +152,11 @@ def test_run_cycle_dispatches_resume_message_and_new_session_jobs(tmp_path, monk
             "poll_interval_seconds": 60,
         }
 
-    def fake_execute_resume_message(job, allowed_projects):
+    def fake_execute_resume_message(job, allowed_projects, enabled_tools):
         calls.append(("resume_message", job["id"], allowed_projects))
         return {"status": "done", "result_text": "", "messages": []}
 
-    def fake_execute_new_session(job, allowed_projects):
+    def fake_execute_new_session(job, allowed_projects, enabled_tools):
         calls.append(("new_session", job["id"], allowed_projects))
         return {"status": "done", "result_text": "", "messages": []}
 
@@ -266,3 +266,24 @@ def test_main_uses_returned_interval_when_run_cycle_succeeds(monkeypatch, tmp_pa
         main.main()
 
     assert sleep_calls == [10]
+
+
+def test_run_cycle_skips_disabled_sources(monkeypatch, tmp_path, capsys):
+    from agent import claude_code_source, cursor_source, main
+    from agent.config import Config
+
+    def boom():
+        raise AssertionError("disabled source was polled")
+
+    monkeypatch.setattr(cursor_source, "list_cursor_sessions", boom)
+    monkeypatch.setattr(claude_code_source, "list_claude_code_sessions", boom)
+
+    config = Config("http://x", "k", tmp_path / "s.json", enabled_tools=())
+    assert main.run_cycle(config, client=None) is None
+    assert "disabled" in capsys.readouterr().err
+
+    config = Config("http://x", "k", tmp_path / "s.json", enabled_tools=("claude-code",))
+    monkeypatch.setattr(claude_code_source, "list_claude_code_sessions", lambda: [])
+    monkeypatch.setattr(main.uploader, "push_sync", lambda *a, **k: True)
+    monkeypatch.setattr(main.jobs, "fetch_pending_jobs", lambda *a, **k: {"jobs": []})
+    main.run_cycle(config, client=None)  # cursor source must not be touched

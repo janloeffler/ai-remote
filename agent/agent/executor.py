@@ -2,8 +2,9 @@ import json
 import os
 import signal
 import subprocess
+from collections.abc import Sequence
 
-from . import allowlist, claude_code_source, cursor_source, permission_profile
+from . import ai_tools, allowlist, claude_code_source, cursor_source, permission_profile
 
 COMMAND_TIMEOUT_SECONDS = 1800
 RESULT_TEXT_TRUNCATE = 4000
@@ -11,7 +12,7 @@ CLAUDE_CLI = ["claude"]
 CURSOR_AGENT_CLI = ["cursor-agent"]
 
 
-def execute_fetch_full(job: dict) -> dict:
+def execute_fetch_full(job: dict, enabled_tools: Sequence[str] = ai_tools.ALL_TOOLS) -> dict:
     parts = job["target"].split(":", 1)
     if len(parts) != 2:
         return {
@@ -21,6 +22,8 @@ def execute_fetch_full(job: dict) -> dict:
             "is_complete": False,
         }
     tool, raw_id = parts
+    if tool in ai_tools.ALL_TOOLS and tool not in enabled_tools:
+        return {"status": "failed", "result_text": f"tool is disabled: {tool}", "messages": [], "is_complete": False}
     if tool == "claude-code":
         messages = claude_code_source.get_full_messages(raw_id)
     elif tool == "cursor":
@@ -106,11 +109,15 @@ def _rejected(reason: str) -> dict:
     return {"status": "failed", "result_text": reason, "messages": [], "is_complete": False}
 
 
-def execute_resume_message(job: dict, allowed_projects: list[str]) -> dict:
+def execute_resume_message(
+    job: dict, allowed_projects: list[str], enabled_tools: Sequence[str] = ai_tools.ALL_TOOLS
+) -> dict:
     parts = job["target"].split(":", 1)
     if len(parts) != 2:
         return _rejected(f"malformed job target: {job['target']!r}")
     tool, raw_id = parts
+    if tool in ai_tools.ALL_TOOLS and tool not in enabled_tools:
+        return _rejected(f"tool is disabled: {tool}")
 
     if tool == "claude-code":
         project_path = claude_code_source.get_project_path(raw_id)
@@ -145,7 +152,9 @@ def execute_resume_message(job: dict, allowed_projects: list[str]) -> dict:
     return _run_and_report(cmd, project_path)
 
 
-def execute_new_session(job: dict, allowed_projects: list[str]) -> dict:
+def execute_new_session(
+    job: dict, allowed_projects: list[str], enabled_tools: Sequence[str] = ai_tools.ALL_TOOLS
+) -> dict:
     project_path = job["target"]
     if not allowlist.is_allowed(project_path, allowed_projects):
         return _rejected(f"project path is not allow-listed: {project_path}")
@@ -155,6 +164,8 @@ def execute_new_session(job: dict, allowed_projects: list[str]) -> dict:
     tool = payload.get("tool")
     if not prompt or tool not in ("claude-code", "cursor"):
         return _rejected("missing prompt/tool in job payload")
+    if tool not in enabled_tools:
+        return _rejected(f"tool is disabled: {tool}")
 
     reason = permission_profile.missing_profile_reason(project_path, tool)
     if reason:

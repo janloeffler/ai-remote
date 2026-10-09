@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -120,6 +121,7 @@ def _date_group_bounds(group: str) -> tuple[str, str]:
 def get_sessions(
     conn: sqlite3.Connection,
     tool: str | None = None,
+    tools: Sequence[str] | None = None,
     project: str | None = None,
     date_group: str | None = None,
     q: str | None = None,
@@ -139,6 +141,11 @@ def get_sessions(
 
     query = "SELECT * FROM sessions WHERE 1=1"
     params: list = []
+    if tools is not None:
+        if not tools:
+            return []
+        query += f" AND tool IN ({','.join('?' * len(tools))})"
+        params.extend(tools)
     if tool:
         query += " AND tool = ?"
         params.append(tool)
@@ -167,10 +174,15 @@ def get_sessions(
     return rows
 
 
-def get_distinct_project_paths(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT DISTINCT project_path FROM sessions WHERE project_path != '' ORDER BY project_path"
-    ).fetchall()
+def get_distinct_project_paths(conn: sqlite3.Connection, tools: Sequence[str] | None = None) -> list[str]:
+    query = "SELECT DISTINCT project_path FROM sessions WHERE project_path != ''"
+    params: list = []
+    if tools is not None:
+        if not tools:
+            return []
+        query += f" AND tool IN ({','.join('?' * len(tools))})"
+        params.extend(tools)
+    rows = conn.execute(query + " ORDER BY project_path", params).fetchall()
     return [row["project_path"] for row in rows]
 
 
