@@ -1,0 +1,85 @@
+{
+  "description": "Interop vectors for ai-remote E2E. master = Argon2id(passphrase_utf8, salt, kdf, len 32). enc_key = HKDF-SHA256(master, salt=empty, info='ai-remote/v1/enc', 32); check = hex(HKDF-SHA256(master, salt=empty, info='ai-remote/v1/key-check', 32)). Text ciphertext = 'e2e1:' + base64url_nopad(nonce12 || AES-256-GCM(enc_key, nonce, utf8(plaintext), aad=utf8(aad))). Binary ciphertext = 'e2e1' || nonce12 || AES-256-GCM(...). All *_b64 fields are standard padded base64.",
+  "kdf_cases": [
+    {
+      "name": "fast",
+      "passphrase": "correct horse battery staple ✓ Ünïcode",
+      "salt_b64": "AAECAwQFBgcICQoLDA0ODw==",
+      "kdf": {
+        "alg": "argon2id",
+        "m": 19456,
+        "t": 2,
+        "p": 1,
+        "v": 19
+      },
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "check_hex": "7b25798c5f2e0bcf1e23e63773cf89683921df6b15f7dfeaf3fca3c97535efb3"
+    },
+    {
+      "name": "default",
+      "passphrase": "correct horse battery staple ✓ Ünïcode",
+      "salt_b64": "AAECAwQFBgcICQoLDA0ODw==",
+      "kdf": {
+        "alg": "argon2id",
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "v": 19
+      },
+      "master_b64": "zP1nlW7RVqQ7Z+MOoPuFO6WgudN2SXE8ZmDyTOsDZIM=",
+      "check_hex": "dd285ca8e7d1eaca033b613c5e59404b06e356e28632af6884cbb21fdf390df1"
+    }
+  ],
+  "cipher_cases": [
+    {
+      "name": "title",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "AAECAwQFBgcICQoL",
+      "aad": "session|s-1|title",
+      "plaintext": "Ünïcode Tïtle 🚀 日本語",
+      "ciphertext": "e2e1:AAECAwQFBgcICQoLBO153ryQhbQ9TqfKExPNKla4gqzbFdkCvbM5hqzilFKcIVSz63CLqpl5oSLmpoY"
+    },
+    {
+      "name": "empty",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "EBESExQVFhcYGRob",
+      "aad": "msg|s-1|0",
+      "plaintext": "",
+      "ciphertext": "e2e1:EBESExQVFhcYGRobgqgYQeR6QqI0WnbMGXPVPA"
+    },
+    {
+      "name": "html",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "ICEiIyQlJicoKSor",
+      "aad": "msg|s-1|7",
+      "plaintext": "<p>Hello <b>wörld</b> &amp; <code>a &lt; b</code></p>\n<pre>x = \"1\"</pre>",
+      "ciphertext": "e2e1:ICEiIyQlJicoKSor5Z8eLW88-y02BNEQ8KQ4IR5zVrcN65-N-h0d20PmQRBaxvoJ-WsGuieaCVuBgh0kE9qDnkkpJHm43XJxzURJ_LOzHun-NY4AUWvRcJERckbprSqH8QbLYrk"
+    },
+    {
+      "name": "preview_json",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "MDEyMzQ1Njc4OTo7",
+      "aad": "session|s-1|preview",
+      "plaintext": "{\"text\": \"hi 👋\", \"html\": \"<p>hi 👋</p>\"}",
+      "ciphertext": "e2e1:MDEyMzQ1Njc4OTo7cmkR7RPmAUTPBiRnTk9MZ8Tz5tEHUzUIZtppmIaK9l5sg_iPGTKtELW-sZu6iJQ0h7IKZpopEjEMIJcPJg"
+    },
+    {
+      "name": "search",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "QEFCQ0RFRkdISUpL",
+      "aad": "job-prompt|search",
+      "plaintext": "needle ä",
+      "ciphertext": "e2e1:QEFCQ0RFRkdISUpLBEg10augrEwp2ETEmfJL0Gx7Aqpj5daPng"
+    }
+  ],
+  "binary_cases": [
+    {
+      "name": "image",
+      "master_b64": "LvlTxK8meeW95brJDWIh9qNi5DAP+BrI1xHmdoUMQPo=",
+      "nonce_b64": "kJGSk5SVlpeYmZqb",
+      "aad": "image|s-1|0123456789abcdef",
+      "bytes_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/4lQTkcNChoK",
+      "ciphertext_b64": "ZTJlMZCRkpOUlZaXmJmam7rRFLutwKoNSwwcM2ZkCgWLSfniKZ9qYerUpHgj8bMV1yGJyfAt2k4PZtT89vMe1kqPxjSZSpCMO7tq5boBSV0C5HFZIBHXsiqhHz8Jmx1+ZY9Vur6fk+6u/aKJOLEBTxff5ueLs1aFhJRC7I8vx4ppdbb/JO4OOHUSdkDH7qxnWks5jMF22+Kw9xt/rlIuCmti7ggA6sOHT8BBx/FxVc1rgS6eSpwSRJrndc5GdObmlpnMa4Ybw7i9qvWynO4ShOsQKD5wfyHupw4YILTNovwSP2xbXFMY8woF2nMAl5o7xOAe4B2p81EJVI2SWn2VP/yYDIQF7SFAe5ZCgsvgTMsAx5NNZ6j6/s00c0pslV0gCdhd3gmKwuk="
+    }
+  ]
+}
