@@ -186,6 +186,9 @@ def fetch_full(session_id: str, full: bool = False, conn=Depends(db.get_db_depen
 
 @app.get("/chats/{session_id}/status", dependencies=[Depends(require_session)])
 def job_status(session_id: str, job_id: str, conn=Depends(db.get_db_dependency)):
+    # The agent is the usual caller of fail_stale_jobs; while it is unreachable, the page's own
+    # polling must be what ends a job nobody picked up.
+    db.fail_stale_jobs(conn)
     job = db.get_job(conn, job_id)
     return {"status": job["status"] if job else "unknown"}
 
@@ -552,6 +555,7 @@ def send_new_session_command(body: NewSessionCommandRequest, conn=Depends(db.get
 
 @app.get("/jobs/{job_id}/status", dependencies=[Depends(require_session)])
 def job_status_generic(job_id: str, conn=Depends(db.get_db_dependency)):
+    db.fail_stale_jobs(conn)
     job = db.get_job(conn, job_id)
     return {"status": job["status"] if job else "unknown", "result_text": job["result_text"] if job else None}
 

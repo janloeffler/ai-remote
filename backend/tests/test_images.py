@@ -181,3 +181,16 @@ def test_markdown_escapes_path_in_attributes():
 def test_marker_without_an_image_path_stays_plain_text():
     html = render_markdown("write [Image: source: …] like this", ImageContext(session_id=SID))
     assert "image-fetch" not in html
+
+
+def test_unclaimed_job_fails_after_its_timeout_when_the_page_polls(client):
+    job_id = client.post(f"/chats/{SID}/fetch-image", json={"path": PASTED}).json()["job_id"]
+    assert client.get(f"/chats/{SID}/status?job_id={job_id}").json()["status"] == "pending"
+    import os
+
+    conn = db.get_connection(os.environ["DATABASE_PATH"])
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    conn.execute("UPDATE jobs SET created_at = ?", (old,))
+    conn.commit()
+    conn.close()
+    assert client.get(f"/chats/{SID}/status?job_id={job_id}").json()["status"] == "failed"

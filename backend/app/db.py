@@ -308,12 +308,13 @@ _JOB_TIMEOUTS_SECONDS = {"fetch_full": 300, "fetch_image": 300, "resume_message"
 
 
 def fail_stale_jobs(conn: sqlite3.Connection) -> None:
+    """Fails jobs nobody finished in time — including ones never claimed (agent offline)."""
     now = datetime.now(timezone.utc)
     for job_type, timeout_seconds in _JOB_TIMEOUTS_SECONDS.items():
         cutoff = (now - timedelta(seconds=timeout_seconds)).isoformat()
         conn.execute(
             "UPDATE jobs SET status = 'failed', result_text = 'timed out', completed_at = ? "
-            "WHERE status = 'running' AND type = ? AND created_at < ?",
+            "WHERE status IN ('pending', 'running') AND type = ? AND created_at < ?",
             (now.isoformat(), job_type, cutoff),
         )
     conn.commit()
