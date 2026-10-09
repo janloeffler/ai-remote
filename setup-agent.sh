@@ -132,6 +132,15 @@ if [ "$E2E_ENABLED" = true ]; then
   if [ "$ROTATE_PASSPHRASE" = true ]; then
     echo -e "${YELLOW}==> Rotating the E2E passphrase: the server cache and job history will be wiped and every browser must enter the new passphrase.${NC}"
     RSTFLAG=(--rotate)
+    # Stop the running agent first so it cannot resync under the old key mid-rotation.
+    if is_loaded; then
+      echo -e "${YELLOW}==> Stopping the installed agent before rotating${NC}"
+      launchctl bootout "$SERVICE_TARGET" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        is_loaded || break
+        sleep 0.1
+      done
+    fi
   fi
   echo -e "${BLUE}==> E2E encryption: checking passphrase/key${NC}"
   # stdout carries only the key (never echoed); prompts and messages use the TTY/stderr.

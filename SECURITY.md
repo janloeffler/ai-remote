@@ -56,7 +56,10 @@ passphrase (Argon2id). The server stores and relays ciphertext only; the browser
 key after login and decrypts locally.
 
 **Covered**
-- Leaked data files: backups, snapshots, copied volumes, retired disks, file-read bugs.
+- Leaked data files written after E2E is on: backups, snapshots, copied volumes, file-read bugs.
+  Plaintext stored before you enabled E2E is not retroactively protected: deleted rows (freed
+  SQLite pages) and unlinked image files may remain recoverable from the raw disk or volume.
+  Enable E2E on a fresh volume/data directory, or securely wipe the old one.
 - A passive attacker with root on the server (reads disk, `.env`, process memory): the server
   never has the key or the passphrase.
 
@@ -68,8 +71,9 @@ key after login and decrypts locally.
   execution on your Mac. E2E does not address that.
 - Metadata stays plaintext: session ids, tool, project paths, image source paths, timestamps,
   message counts, roles, sizes, job type/status/target.
-- Old backups. Switching the mode wipes the server's database (securely, then `VACUUM`), but
-  backups made earlier stay plaintext — delete them yourself.
+- Old backups and old disks. Switching the mode wipes the server's database (securely, then `VACUUM`), but
+  backups made earlier stay plaintext — delete them yourself — and wiped data may still be
+  recoverable from the underlying disk (see above).
 
 **Keys**
 - On the Mac the derived key (not the passphrase) sits in the launchd plist
@@ -81,7 +85,8 @@ key after login and decrypts locally.
   sessions and the agent, and allow an offline guess attack. Use a long, unique passphrase
   (minimum 16 characters is enforced).
 - Fail-closed: if the agent's and server's modes or keys disagree, the agent syncs nothing and
-  claims no jobs, and the server rejects plaintext in E2E mode.
+  claims no jobs, and the server rejects plaintext in E2E mode. A plaintext-mode agent declares
+  its mode via a header, and the server rejects a mismatch.
 
 ## Known limitations
 

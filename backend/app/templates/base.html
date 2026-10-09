@@ -18,7 +18,7 @@
     })();
   </script>
   <link rel="manifest" href="/static/manifest.json">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ build_timestamp }}">
   <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
@@ -75,11 +75,11 @@
   <script type="application/json" id="i18n-data">{{ js_strings() | tojson }}</script>
   {% block e2e_assets %}{% if e2e_enabled() %}
   <script type="application/json" id="e2e-config">{{ e2e_config() | tojson }}</script>
-  <script src="/static/vendor/hash-wasm-argon2.umd.min.js"></script>
-  <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/e2e-core.js"></script>
-  <script src="/static/e2e.js"></script>
+  <script src="/static/vendor/hash-wasm-argon2.umd.min.js?v={{ build_timestamp }}"></script>
+  <script src="/static/vendor/purify.min.js?v={{ build_timestamp }}"></script>
+  <script src="/static/e2e-core.js?v={{ build_timestamp }}"></script>
+  <script src="/static/e2e.js?v={{ build_timestamp }}"></script>
   {% endif %}{% endblock %}
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ build_timestamp }}"></script>
 </body>
 </html>

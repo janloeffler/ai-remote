@@ -159,7 +159,9 @@ Enable, in this order:
 Rotate the passphrase with `./setup-agent.sh --rotate-passphrase` (wipes the server cache; every
 browser must enter the new passphrase). Disable by setting `E2E_ENCRYPTION=false`, deploying and
 re-running `./setup-agent.sh` (wipes again, the agent resyncs in plaintext). Delete old backups of
-`data/` yourself — they stay plaintext.
+`data/` yourself — they stay plaintext. Deleted plaintext (freed SQLite pages, unlinked image
+files) may also remain recoverable from the raw disk; for real protection enable E2E on a fresh
+volume/data directory or securely wipe the old one.
 
 Trade-offs: search runs on the Mac (the agent must be online), sorting by title is unavailable, and
 project paths, image paths, timestamps and message counts stay plaintext.

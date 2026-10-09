@@ -23,9 +23,16 @@
 
   let encKey = null;
   let resolveReady;
+  // Published right away so app.js can tell "E2E page, still locked" from "E2E scripts missing".
+  window.E2E = {
+    isActive: () => false,
+    errorText: () => (paramsMissing ? i18nText("js.e2e.not_set_up") : i18nText("js.e2e.locked")),
+  };
   window.e2eReady = new Promise((resolve) => {
     resolveReady = resolve;
   });
+
+  const i18nText = (key) => tr(key);
 
   const i18n = (() => {
     try {
@@ -39,6 +46,12 @@
     for (const [name, value] of Object.entries(vars || {})) text = text.split(`{${name}}`).join(value);
     return text;
   };
+
+  // e2e-core.js (or a vendor lib) failed to load: stay inactive; app.js then refuses to send.
+  if (!Core) {
+    resolveReady();
+    return;
+  }
 
   // ---- IndexedDB key record ----------------------------------------------------------
 
@@ -168,7 +181,8 @@
             return;
           }
         } catch (error) {
-          status.textContent = tr("js.e2e.wrong_passphrase");
+          // Library/derivation failure, not a wrong passphrase (that is the key_check branch).
+          status.textContent = tr("js.e2e.decrypt_failed");
         }
         input.value = "";
         input.disabled = false;
@@ -367,8 +381,8 @@
     }
   }
 
-  window.E2E = {
-    isActive: () => true,
+  Object.assign(window.E2E, {
+    isActive: () => encKey !== null,
     encrypt,
     decrypt,
     decryptResult,
@@ -378,7 +392,7 @@
       return loadImage(sessionId, path, url);
     },
     aad: Core.aad,
-  };
+  });
 
   // ---- Encrypted search (list page) --------------------------------------------------
 

@@ -21,18 +21,39 @@ function errorText(detail) {
 }
 
 // E2E mode (see e2e.js): window.E2E exists only there; plaintext mode never touches it.
+// If the page demands E2E (enabled #e2e-config) but the scripts are missing or still locked,
+// the app fails closed: nothing is ever sent as plaintext.
+const e2eRequired = (() => {
+  try {
+    const node = document.getElementById("e2e-config");
+    return Boolean(node && JSON.parse(node.textContent).enabled);
+  } catch (error) {
+    return Boolean(document.getElementById("e2e-config"));
+  }
+})();
 const e2eActive = () => Boolean(window.E2E && window.E2E.isActive());
 const afterE2eReady = (fn) =>
   document.addEventListener("DOMContentLoaded", () => (window.e2eReady || Promise.resolve()).then(fn));
+const PROMPT_MAX_LENGTH = 32000; // same plaintext limit as the server (models.PROMPT_MAX_LENGTH)
 
 // Encrypts a prompt in E2E mode; a failure carries a user-facing message (e2eMessage).
-const preparePrompt = (text, aad) =>
-  e2eActive()
-    ? E2E.encrypt(text, aad).catch((error) => {
-        error.e2eMessage = error.message;
-        throw error;
-      })
-    : Promise.resolve(text);
+const preparePrompt = (text, aad) => {
+  const fail = (message) => {
+    const error = new Error(message);
+    error.e2eMessage = message;
+    return Promise.reject(error);
+  };
+  if (e2eRequired) {
+    if (!window.E2E) return fail(t("js.send_error"));
+    if (!window.E2E.isActive()) return fail(window.E2E.errorText());
+    if (text.length > PROMPT_MAX_LENGTH) return fail(t("js.send_error"));
+    return E2E.encrypt(text, aad).catch((error) => {
+      error.e2eMessage = error.message;
+      throw error;
+    });
+  }
+  return Promise.resolve(text);
+};
 
 function makeCountdown(statusNode, verbKey) {
   let countdownId = null;
@@ -621,6 +642,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     // In E2E mode the server holds ciphertext: fetch, decrypt and show it as a blob: URL.
     const show = (url) => {
+      if (e2eRequired && !e2eActive()) return fail(t("js.image_failed"));
       if (!e2eActive()) return render(url);
       return E2E.loadImage(sessionId, button.dataset.path, url).then(render, () => fail(t("js.image_failed")));
     };
