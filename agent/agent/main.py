@@ -33,6 +33,37 @@ def _execute_job(job: dict, config: Config, client: httpx.Client, keys) -> dict:
     return {"status": "failed", "result_text": f"job type {job['type']} not supported in this version"}
 
 
+# A full resync (first run, new server epoch) is hundreds of sessions. Sent as one request
+# it outlived the client timeout and was retried whole every cycle, so it never finished.
+# Batches are saved as they land; whatever exceeds the per-cycle cap goes next cycle, so
+# pending jobs are never stuck behind a long resync.
+SYNC_BATCH_SIZE = 20
+MAX_SYNC_BATCHES_PER_CYCLE = 5
+
+
+def _push_in_batches(config: Config, client: httpx.Client, deltas: list[dict], synced: dict, keys) -> None:
+    for start in range(0, min(len(deltas), SYNC_BATCH_SIZE * MAX_SYNC_BATCHES_PER_CYCLE), SYNC_BATCH_SIZE):
+        batch = deltas[start:start + SYNC_BATCH_SIZE]
+        if keys is None:
+            outgoing, pushed = batch, batch
+        else:
+            outgoing, pushed = [], []
+            for s in batch:
+                try:
+                    outgoing.append(seal.seal_session(s, keys, config.image_upload_enabled))
+                    pushed.append(s)
+                except Exception as exc:
+                    # Never log content: the exception text may quote it.
+                    print(f"session {s.get('id')}: cannot seal ({type(exc).__name__})", file=sys.stderr)
+        if not uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client, e2e=config.e2e):
+            return
+        for s in pushed:
+            synced[s["id"]] = s["last_updated_at"]
+        state.save_synced_ids(synced, config.state_path)
+        if config.image_upload_enabled:
+            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in pushed}, keys)
+
+
 def run_cycle(config: Config, client: httpx.Client) -> int | None:
     if not config.enabled_tools:
         print(ai_tools.NONE_ENABLED_MESSAGE, file=sys.stderr)
@@ -54,23 +85,7 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
 
     all_sessions = claude_sessions + changed_cursor_sessions
     deltas = state.compute_deltas(all_sessions, synced)
-    if keys is None:
-        outgoing, pushed = deltas, deltas
-    else:
-        outgoing, pushed = [], []
-        for s in deltas:
-            try:
-                outgoing.append(seal.seal_session(s, keys, config.image_upload_enabled))
-                pushed.append(s)
-            except Exception as exc:
-                # Never log content: the exception text may quote it.
-                print(f"session {s.get('id')}: cannot seal ({type(exc).__name__})", file=sys.stderr)
-    if uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client, e2e=config.e2e):
-        for s in pushed:
-            synced[s["id"]] = s["last_updated_at"]
-        state.save_synced_ids(synced, config.state_path)
-        if config.image_upload_enabled:
-            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in pushed}, keys)
+    _push_in_batches(config, client, deltas, synced, keys)
 
     next_interval = None
     try:
