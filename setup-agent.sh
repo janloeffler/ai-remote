@@ -155,7 +155,8 @@ if [ "$E2E_ENABLED" = true ]; then
     else
       echo -e "${RED}E2E setup failed; no service was installed or changed.${NC}"
     fi
-    echo "The server must already run with E2E_ENCRYPTION=true (deploy it first), and API_KEY/backend URL must be correct."
+    echo "See the error above. Usual causes: no interactive terminal for the passphrase prompt, the server"
+    echo "not yet running with E2E_ENCRYPTION=true (deploy it first), or a wrong API_KEY/backend URL."
     exit 1
   fi
   E2E_KEY="$(printf '%s' "$E2E_KEY" | tr -d '[:space:]')"

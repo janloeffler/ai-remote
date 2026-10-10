@@ -130,6 +130,10 @@ def main(argv=None, env=None, client=None, getpass_fn=getpass.getpass) -> int:
     except SetupError as exc:
         _err(f"error: {exc}")
         return 1
+    except (EOFError, KeyboardInterrupt):
+        # getpass without a terminal (e.g. a non-interactive shell) reads EOF.
+        _err("error: the passphrase prompt needs an interactive terminal — run ./setup-agent.sh in Terminal.")
+        return 1
     finally:
         if own_client:
             client.close()

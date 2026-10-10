@@ -144,3 +144,17 @@ def test_non_json_handshake_body(capsys):
     s.client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>login</html>")))
     rc, _, err = run(s, capsys)
     assert rc == 1 and "did not return JSON" in err and "Traceback" not in err
+
+
+def test_no_terminal_for_the_prompt_is_a_clear_error(capsys):
+    from agent import e2e_setup
+
+    def no_tty(prompt):
+        raise EOFError
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"e2e": True, "epoch": "e", "salt": None, "kdf": None, "key_check": None})
+    )
+    env = {"AI_REMOTE_BACKEND_URL": "http://b", "AI_REMOTE_API_KEY": "k"}
+    assert e2e_setup.main([], env, httpx.Client(transport=transport), no_tty) == 1
+    assert "interactive terminal" in capsys.readouterr().err
