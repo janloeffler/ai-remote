@@ -70,8 +70,9 @@ key after login and decrypts locally.
 - `API_KEY` still matters, but less: in E2E mode an attacker who only holds `API_KEY` cannot
   run commands, because prompts must be encrypted with the passphrase-derived key and are
   replay-protected by a one-time id plus a 1 h expiry, enforced on the Mac. Such an attacker can
-  still pause/unpause remote commands, queue fetches and searches, and read metadata; the kill
-  switch remains. Root on the server can still serve modified JavaScript (active attacker,
+  still pause/unpause remote commands, queue fetches and searches, read metadata, and delay or
+  suppress one of your real prompts (by claiming its job through the agent API) — but not run a
+  new one; the kill switch remains. Root on the server can still serve modified JavaScript (active attacker,
   above), which defeats this.
 - Metadata stays plaintext: session ids, tool, project paths, image source paths, timestamps,
   message counts, roles, sizes, job type/status/target.

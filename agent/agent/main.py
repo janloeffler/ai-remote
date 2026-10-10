@@ -42,6 +42,8 @@ MAX_SYNC_BATCHES_PER_CYCLE = 5
 
 
 def _push_in_batches(config: Config, client: httpx.Client, deltas: list[dict], synced: dict, keys) -> None:
+    uploaded_from: dict[str, list[dict]] = {}
+    failures_in_a_row = 0
     for start in range(0, min(len(deltas), SYNC_BATCH_SIZE * MAX_SYNC_BATCHES_PER_CYCLE), SYNC_BATCH_SIZE):
         batch = deltas[start:start + SYNC_BATCH_SIZE]
         # Cursor messages come from one big SQLite store; load them only for what is sent
@@ -61,12 +63,20 @@ def _push_in_batches(config: Config, client: httpx.Client, deltas: list[dict], s
                     # Never log content: the exception text may quote it.
                     print(f"session {s.get('id')}: cannot seal ({type(exc).__name__})", file=sys.stderr)
         if not uploader.push_sync(config.backend_url, config.api_key, outgoing, client=client, e2e=config.e2e):
-            return
+            # A batch the server rejects for good (too large, one bad session) must not
+            # hold back the ones after it; two failures in a row look like an outage.
+            failures_in_a_row += 1
+            if failures_in_a_row >= 2:
+                break
+            continue
+        failures_in_a_row = 0
         for s in pushed:
             synced[s["id"]] = s["last_updated_at"]
+            uploaded_from[s["id"]] = s.get("recent_messages", [])
         state.save_synced_ids(synced, config.state_path)
-        if config.image_upload_enabled:
-            _upload_images(config, client, {s["id"]: s.get("recent_messages", []) for s in pushed}, keys)
+    if config.image_upload_enabled and uploaded_from:
+        # Once per cycle, so the per-cycle upload budget in images.py holds.
+        _upload_images(config, client, uploaded_from, keys)
 
 
 def run_cycle(config: Config, client: httpx.Client) -> int | None:

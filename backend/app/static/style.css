@@ -965,3 +965,6 @@ button.danger {
 .e2e-unlock-logout { margin: 0; }
 .e2e-unlock-logout button { background: none; border: 0; padding: 0.25rem; color: var(--text-muted); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.85rem; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Icon sprite container: out of the layout, but <use> references keep rendering. */
+.icon-sprite { position: absolute; }

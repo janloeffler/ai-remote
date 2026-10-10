@@ -487,7 +487,9 @@ def list_chats_restricted(
     project: str | None = Form(default=None),
     group: str | None = Form(default=None),
     sort: str = Form(default="date_desc"),
-    ids: str = Form(default=""),
+    # Missing (or empty — FastAPI treats both alike) = no restriction, e.g. the search box
+    # was cleared on a results page. A search without hits never posts here.
+    ids: str | None = Form(default=None),
     conn=Depends(db.get_db_dependency),
 ):
     """The chat list restricted to the session ids of an E2E search, carried in the body."""

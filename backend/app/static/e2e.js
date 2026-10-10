@@ -158,7 +158,7 @@
       logout.className = "e2e-unlock-logout";
       const logoutButton = document.createElement("button");
       logoutButton.type = "submit";
-            logoutButton.textContent = tr("js.e2e.logout");
+      logoutButton.textContent = tr("js.e2e.logout");
       logout.appendChild(logoutButton);
       wireLogout(logout);
 
@@ -492,6 +492,7 @@
       if (!query) {
         // Cleared box: plain filter submit, without a stale search restriction.
         if (idsInput) idsInput.remove();
+        form.method = "get";
         try {
           sessionStorage.removeItem(SEARCH_KEY);
         } catch (error) {

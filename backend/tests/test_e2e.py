@@ -407,7 +407,13 @@ def test_ids_only_via_post_never_in_get(plain):
     assert ids(post("claude-code:a")) == ["claude-code:a"]
     assert ids(post("claude-code:a,claude-code:b, ,nope")) == ["claude-code:a", "claude-code:b"]
     assert ids(post("nope")) == []
-    assert ids(post("")) == []
+    # FastAPI reads an empty optional form field as missing, so "" lifts the restriction
+    # like an absent field does. The browser never sends it: a search without hits shows
+    # "no results" in place instead of navigating.
+    assert len(ids(post(""))) == 2
+    # No ids field at all (search box cleared on a results page): the full list.
+    no_ids = plain.post("/", data={"sort": "date_desc"})
+    assert len(ids(no_ids)) == 2 and no_ids.context["ids_restricted"] is False
     assert len(ids(plain.get("/"))) == 2
     assert post(",".join(f"i{n}" for n in range(101))).status_code == 422
     assert post(",".join(f"i{n}" for n in range(100))).status_code == 200

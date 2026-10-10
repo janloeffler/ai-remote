@@ -35,12 +35,21 @@ def test_full_resync_is_split_into_batches_and_capped_per_cycle(tmp_path, monkey
     assert len(state.load_synced_ids(config.state_path)) == 130
 
 
-def test_failed_batch_keeps_earlier_batches_and_stops_pushing(tmp_path, monkeypatch):
+def test_a_rejected_batch_does_not_block_the_batches_after_it(tmp_path, monkeypatch):
     config, pushes, jobs_polled = _setup(tmp_path, monkeypatch, count=60, fail_on_batch=2)
     main.run_cycle(config, client=None)
-    assert len(pushes) == 2
+    assert len(pushes) == 3
     synced = state.load_synced_ids(config.state_path)
-    assert set(synced) == set(pushes[0])
+    assert set(synced) == set(pushes[0]) | set(pushes[2])
+    assert jobs_polled
+
+
+def test_two_failed_batches_in_a_row_stop_the_push(tmp_path, monkeypatch):
+    config, pushes, jobs_polled = _setup(tmp_path, monkeypatch, count=100, fail_on_batch=None)
+    monkeypatch.setattr("agent.uploader.push_sync", lambda *a, **kw: pushes.append(1) or False)
+    main.run_cycle(config, client=None)
+    assert len(pushes) == 2
+    assert state.load_synced_ids(config.state_path) == {}
     assert jobs_polled
 
 
