@@ -245,7 +245,8 @@ cd backend && .venv/bin/pytest -v
 cd agent && .venv/bin/pytest -v
 ```
 
-or `./run.sh --test` to run both from the repo root.
+or `./run.sh --test` to run both from the repo root. Node.js is required for the crypto interop
+test (`node --test backend/tests/js/*.test.mjs`); without it that test is skipped.
 
 ## License
 

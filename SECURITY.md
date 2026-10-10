@@ -67,8 +67,12 @@ key after login and decrypts locally.
 - An active attacker on the server. The server delivers the JavaScript that receives your
   passphrase; someone who modifies it can capture the passphrase at your next login. This is
   inherent to web-delivered E2E.
-- `API_KEY` is unchanged: root on the server still reads it, and it grants remote command
-  execution on your Mac. E2E does not address that.
+- `API_KEY` still matters, but less: in E2E mode an attacker who only holds `API_KEY` cannot
+  run commands, because prompts must be encrypted with the passphrase-derived key and are
+  replay-protected by a one-time id plus a 1 h expiry, enforced on the Mac. Such an attacker can
+  still pause/unpause remote commands, queue fetches and searches, and read metadata; the kill
+  switch remains. Root on the server can still serve modified JavaScript (active attacker,
+  above), which defeats this.
 - Metadata stays plaintext: session ids, tool, project paths, image source paths, timestamps,
   message counts, roles, sizes, job type/status/target.
 - Old backups and old disks. Switching the mode wipes the server's database (securely, then `VACUUM`), but
@@ -79,8 +83,12 @@ key after login and decrypts locally.
 - On the Mac the derived key (not the passphrase) sits in the launchd plist
   (`AI_REMOTE_E2E_KEY`), file mode `600`. Anyone who can read your user's files can read it —
   as they could already read your chats.
-- In the browser a non-extractable key is kept in IndexedDB until you log out or `API_KEY` /
-  the passphrase is rotated. Malicious script running in the page while unlocked can use it.
+- In the browser a non-extractable key is kept in IndexedDB. It is deleted on logout (also from
+  the unlock overlay), on visiting the login page, and when an `API_KEY` / passphrase rotation is
+  detected at the next page load. Malicious script running in the page while unlocked can use it.
+- A strict Content-Security-Policy applies to all pages (`script-src 'self' 'wasm-unsafe-eval'`,
+  `style-src 'self'`, `img-src 'self' blob: data:`), limiting injected script. Child processes
+  started by the agent no longer see the `AI_REMOTE_*` environment variables (including the key).
 - Passphrase strength matters: the salt and key-check value are served to authenticated
   sessions and the agent, and allow an offline guess attack. Use a long, unique passphrase
   (minimum 16 characters is enforced).

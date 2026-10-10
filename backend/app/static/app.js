@@ -47,7 +47,7 @@ const preparePrompt = (text, aad) => {
     if (!window.E2E) return fail(t("js.send_error"));
     if (!window.E2E.isActive()) return fail(window.E2E.errorText());
     if (text.length > PROMPT_MAX_LENGTH) return fail(t("js.send_error"));
-    return E2E.encrypt(text, aad).catch((error) => {
+    return E2E.encrypt(window.E2ECore.makePromptEnvelope(text), aad).catch((error) => {
       error.e2eMessage = error.message;
       throw error;
     });

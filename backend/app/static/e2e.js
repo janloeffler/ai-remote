@@ -26,13 +26,11 @@
   // Published right away so app.js can tell "E2E page, still locked" from "E2E scripts missing".
   window.E2E = {
     isActive: () => false,
-    errorText: () => (paramsMissing ? i18nText("js.e2e.not_set_up") : i18nText("js.e2e.locked")),
+    errorText: () => errorText(),
   };
   window.e2eReady = new Promise((resolve) => {
     resolveReady = resolve;
   });
-
-  const i18nText = (key) => tr(key);
 
   const i18n = (() => {
     try {
@@ -130,7 +128,7 @@
       label.textContent = tr("js.e2e.passphrase");
       const input = document.createElement("input");
       input.type = "password";
-      input.autocomplete = "current-password";
+      input.autocomplete = "new-password";
       input.required = true;
       input.autofocus = true;
       label.appendChild(input);
@@ -143,8 +141,30 @@
       status.className = "e2e-unlock-status";
       status.setAttribute("role", "status");
 
-      form.append(title, label, submit, status);
-      overlay.appendChild(form);
+      // Keeps password managers from treating the passphrase as a site login.
+      const username = document.createElement("input");
+      username.type = "text";
+      username.name = "username";
+      username.autocomplete = "username";
+      username.value = "e2e-passphrase";
+      username.readOnly = true;
+      username.tabIndex = -1;
+      username.className = "visually-hidden";
+      username.setAttribute("aria-hidden", "true");
+
+      const logout = document.createElement("form");
+      logout.method = "post";
+      logout.action = "/logout";
+      logout.className = "e2e-unlock-logout";
+      const logoutButton = document.createElement("button");
+      logoutButton.type = "submit";
+            logoutButton.textContent = tr("js.e2e.logout");
+      logout.appendChild(logoutButton);
+      wireLogout(logout);
+
+      form.append(title, username, label, submit, status);
+      // Sibling of the unlock form: forms must not nest.
+      overlay.append(form, logout);
       document.body.appendChild(overlay);
       input.focus();
 
@@ -152,7 +172,10 @@
       overlay.addEventListener("keydown", (event) => {
         if (event.key === "Tab") {
           event.preventDefault();
-          (document.activeElement === input ? submit : input).focus();
+          const order = [input, submit, logoutButton].filter((el) => !el.disabled);
+          const at = order.indexOf(document.activeElement);
+          const step = event.shiftKey ? -1 : 1;
+          order[(at + step + order.length) % order.length].focus();
         }
       });
 
@@ -332,7 +355,8 @@
             aad = Core.aad.searchQuery();
           }
           if (!field || !Core.isCiphertext(payload[field])) return;
-          payload[field] = await Core.decryptText(encKey, payload[field], aad);
+          const plain = await Core.decryptText(encKey, payload[field], aad);
+          payload[field] = field === "prompt" ? Core.parsePromptEnvelope(plain) : plain;
           node.textContent = JSON.stringify(payload);
         } catch (error) {
           markFailed(node);
@@ -400,14 +424,14 @@
     const input = document.getElementById("e2e-search");
     if (!input) return;
     const form = input.form;
-    const params = new URLSearchParams(location.search);
     let stored = null;
     try {
       stored = sessionStorage.getItem(SEARCH_KEY);
     } catch (error) {
       /* ignore */
     }
-    if (params.get("ids") && stored) input.value = stored;
+    const idsPresent = () => Boolean(form.querySelector('input[name="ids"]'));
+    if (idsPresent() && stored) input.value = stored;
 
     let note = form.parentNode.querySelector(".e2e-search-status");
     if (!note) {
@@ -425,14 +449,25 @@
     const idsInput = form.querySelector('input[name="ids"]');
     let busy = false;
 
+    // Result ids go in a POST body, never in the URL (history, proxy logs, Referer).
     const navigate = (ids) => {
-      const target = new URLSearchParams();
+      const post = document.createElement("form");
+      post.method = "post";
+      post.action = "/";
+      post.hidden = true;
+      const add = (name, value) => {
+        const field = document.createElement("input");
+        field.type = "hidden";
+        field.name = name;
+        field.value = value;
+        post.appendChild(field);
+      };
       for (const [name, value] of new FormData(form).entries()) {
-        if (name !== "ids" && typeof value === "string" && value !== "") target.append(name, value);
+        if (name !== "ids" && typeof value === "string" && value !== "") add(name, value);
       }
-      if (ids) target.set("ids", ids.join(","));
-      const qs = target.toString();
-      location.href = qs ? `/?${qs}` : "/";
+      add("ids", ids.join(","));
+      document.body.appendChild(post);
+      post.submit();
     };
 
     const pollJob = async (jobId, countdown) => {
@@ -445,7 +480,7 @@
           countdown && countdown.stop();
           return data.result_text;
         }
-        if (data.status === "failed") {
+        if (data.status === "failed" || data.status === "unknown") {
           countdown && countdown.stop();
           throw new Error("failed");
         }
@@ -478,7 +513,14 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: ciphertext }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // 409: a search is already pending; show it and let the user retry later.
+          if (res.status === 409) {
+            say(tr("js.e2e.search_running"));
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
         const { job_id, eta_seconds } = await res.json();
         if (typeof makeCountdown === "function") {
           countdown = makeCountdown(note, "js.e2e.search_verb");
@@ -508,21 +550,23 @@
 
   // ---- Logout ------------------------------------------------------------------------
 
-  function setupLogout() {
-    document.querySelectorAll('form[action="/logout"]').forEach((form) => {
-      form.addEventListener("submit", async (event) => {
-        if (form.dataset.e2eCleared) return;
-        event.preventDefault();
-        try {
-          await deleteRecord();
-        } catch (error) {
-          /* nothing stored, or storage unavailable */
-        }
-        encKey = null;
-        form.dataset.e2eCleared = "1";
-        form.submit();
-      });
+  function wireLogout(form) {
+    form.addEventListener("submit", async (event) => {
+      if (form.dataset.e2eCleared) return;
+      event.preventDefault();
+      try {
+        await deleteRecord();
+      } catch (error) {
+        /* nothing stored, or storage unavailable */
+      }
+      encKey = null;
+      form.dataset.e2eCleared = "1";
+      form.submit();
     });
+  }
+
+  function setupLogout() {
+    document.querySelectorAll('form[action="/logout"]').forEach(wireLogout);
   }
 
   // ---- Start -------------------------------------------------------------------------

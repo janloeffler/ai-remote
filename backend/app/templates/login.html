@@ -4,8 +4,10 @@
 {% block e2e_assets %}{% endblock %}
 {% block content %}
 <form method="post" action="/login" class="login-form">
+  <input type="text" name="username" value="api-key" autocomplete="username" readonly tabindex="-1" aria-hidden="true" class="visually-hidden">
   <label>{{ t('login.api_key') }} <input type="password" name="api_key" autocomplete="current-password" autofocus></label>
   <button type="submit" class="primary">{{ t('login.submit') }}</button>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
 </form>
+{% if e2e_enabled() %}<script src="/static/e2e-login.js?v={{ asset_version }}"></script>{% endif %}
 {% endblock %}

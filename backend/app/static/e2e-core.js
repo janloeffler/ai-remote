@@ -43,11 +43,30 @@
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  // Same bounds the server enforces on the published KDF parameters.
+  const inRange = (value, lo, hi) => Number.isInteger(value) && value >= lo && value <= hi;
+
+  function validateKdf(saltB64, kdf) {
+    if (!kdf || kdf.alg !== "argon2id" || kdf.v !== 19) throw new Error("unsupported kdf");
+    if (!inRange(kdf.m, 19456, 1048576) || !inRange(kdf.t, 2, 10) || !inRange(kdf.p, 1, 4)) {
+      throw new Error("kdf parameters out of range");
+    }
+    if (typeof saltB64 !== "string") throw new Error("bad salt");
+    let salt;
+    try {
+      salt = b64ToBytes(saltB64);
+    } catch (error) {
+      throw new Error("bad salt");
+    }
+    if (salt.length < 16 || salt.length > 64) throw new Error("bad salt length");
+    return salt;
+  }
+
   async function deriveMaster(passphrase, saltB64, kdf, argon2id) {
-    if (!kdf || kdf.alg !== "argon2id") throw new Error("unsupported kdf");
+    const salt = validateKdf(saltB64, kdf);
     return argon2id({
       password: enc.encode(passphrase),
-      salt: b64ToBytes(saltB64),
+      salt,
       parallelism: kdf.p,
       iterations: kdf.t,
       memorySize: kdf.m,
@@ -56,18 +75,17 @@
     });
   }
 
-  async function hkdf(masterKey, info, usages, bits) {
-    const params = { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: enc.encode(info) };
-    if (bits) return new Uint8Array(await subtle().deriveBits(params, masterKey, 256));
-    return subtle().deriveKey(params, masterKey, { name: "AES-GCM", length: 256 }, false, usages);
-  }
+  const hkdfParams = (info) => ({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: enc.encode(info) });
+  const hkdfBits = async (masterKey, info) => new Uint8Array(await subtle().deriveBits(hkdfParams(info), masterKey, 256));
+  const hkdfKey = (masterKey, info) =>
+    subtle().deriveKey(hkdfParams(info), masterKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 
   // Consumes (zeroes) masterBytes.
   async function importKeys(masterBytes) {
     try {
       const master = await subtle().importKey("raw", masterBytes, "HKDF", false, ["deriveKey", "deriveBits"]);
-      const encKey = await hkdf(master, "ai-remote/v1/enc", ["encrypt", "decrypt"], false);
-      const check = bytesToHex(await hkdf(master, "ai-remote/v1/key-check", null, true));
+      const encKey = await hkdfKey(master, "ai-remote/v1/enc");
+      const check = bytesToHex(await hkdfBits(master, "ai-remote/v1/key-check"));
       return { encKey, check };
     } finally {
       masterBytes.fill(0);
@@ -145,6 +163,23 @@
     image: (sid, key) => `image|${sid}|${key}`,
   };
 
+  // Plaintext of resume/new-session prompts: the agent enforces one-time rid and ts freshness.
+  function makePromptEnvelope(prompt) {
+    const rid = bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(16)));
+    return JSON.stringify({ v: 1, prompt, rid, ts: Date.now() });
+  }
+
+  // Returns the prompt text; anything that is not a v1 envelope is returned unchanged.
+  function parsePromptEnvelope(text) {
+    try {
+      const obj = JSON.parse(text);
+      if (obj && typeof obj === "object" && obj.v === 1 && typeof obj.prompt === "string") return obj.prompt;
+    } catch (error) {
+      /* not an envelope */
+    }
+    return text;
+  }
+
   function constantTimeEqual(a, b) {
     if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
     let diff = 0;
@@ -155,6 +190,6 @@
   return {
     b64ToBytes, bytesToB64, bytesToB64url, b64urlToBytes, bytesToHex,
     deriveMaster, importKeys, encryptText, decryptText, encryptBytes, decryptBytes,
-    isCiphertext, pathKey, sniffImageMime, aad, constantTimeEqual,
+    isCiphertext, pathKey, makePromptEnvelope, parsePromptEnvelope, sniffImageMime, aad, constantTimeEqual,
   };
 });

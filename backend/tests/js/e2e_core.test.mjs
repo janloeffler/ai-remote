@@ -76,7 +76,45 @@ test("sniffImageMime", () => {
 
 test("aad helpers follow the spec table", () => {
   assert.equal(core.aad.title("s"), "session|s|title");
+  assert.equal(core.aad.preview("s"), "session|s|preview");
   assert.equal(core.aad.message("s", 3), "msg|s|3");
+  assert.equal(core.aad.resumePrompt("s"), "job-prompt|resume_message|s");
   assert.equal(core.aad.newSessionPrompt("/p", "codex"), "job-prompt|new_session|/p|codex");
+  assert.equal(core.aad.searchQuery(), "job-prompt|search");
+  assert.equal(core.aad.jobResult("j"), "job-result|j");
   assert.equal(core.aad.image("s", "k"), "image|s|k");
+});
+
+test("prompt envelope: shape, unique rid, round trip, fallback", () => {
+  const a = JSON.parse(core.makePromptEnvelope("héllo"));
+  const b = JSON.parse(core.makePromptEnvelope("héllo"));
+  assert.deepEqual(Object.keys(a).sort(), ["prompt", "rid", "ts", "v"]);
+  assert.equal(a.v, 1);
+  assert.equal(a.prompt, "héllo");
+  assert.match(a.rid, /^[0-9a-f]{32}$/);
+  assert.notEqual(a.rid, b.rid);
+  assert.ok(Math.abs(Date.now() - a.ts) < 5000);
+  assert.equal(core.parsePromptEnvelope(core.makePromptEnvelope("x\ny")), "x\ny");
+  assert.equal(core.parsePromptEnvelope("plain text"), "plain text");
+  assert.equal(core.parsePromptEnvelope('{"v":2,"prompt":"p"}'), '{"v":2,"prompt":"p"}');
+  assert.equal(core.parsePromptEnvelope("123"), "123");
+});
+
+test("deriveMaster rejects out-of-range kdf and bad salts", async () => {
+  const salt = core.bytesToB64(new Uint8Array(16));
+  const ok = { alg: "argon2id", v: 19, m: 19456, t: 2, p: 1 };
+  const never = async () => {
+    throw new Error("argon2 must not run");
+  };
+  const stub = async () => new Uint8Array(32);
+  await core.deriveMaster("pw", salt, ok, stub);
+  const bad = [
+    { ...ok, alg: "argon2i" }, { ...ok, v: 16 }, { ...ok, m: 19455 }, { ...ok, m: 1048577 },
+    { ...ok, t: 1 }, { ...ok, t: 11 }, { ...ok, p: 0 }, { ...ok, p: 5 }, { ...ok, m: "19456" }, null,
+  ];
+  for (const kdf of bad) await assert.rejects(core.deriveMaster("pw", salt, kdf, never));
+  for (const s of [core.bytesToB64(new Uint8Array(15)), core.bytesToB64(new Uint8Array(65)), "!!!", null]) {
+    await assert.rejects(core.deriveMaster("pw", s, ok, never));
+  }
+  await core.deriveMaster("pw", core.bytesToB64(new Uint8Array(64)), { ...ok, m: 1048576, t: 10, p: 4 }, stub);
 });

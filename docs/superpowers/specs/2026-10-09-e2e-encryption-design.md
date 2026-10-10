@@ -24,14 +24,19 @@ passive root attacker is one where **the server never has the key**.
 | C — active root on the server (modifies code/JS, waits for next login) | **No** — the server delivers the JS that receives the passphrase. Inherent to web E2E. |
 | D — hoster/admin as reader | Same as A/B |
 
-**Out of scope, stated plainly:** root on the server still reads `API_KEY`, which grants
-remote command execution on the Mac. E2E does not change that; it is a separate topic.
+**Remote execution:** in E2E mode an `API_KEY`-only attacker cannot run commands: prompts must
+be encrypted with the passphrase-derived key and carry a one-time id plus a timestamp (1 h
+expiry), enforced on the Mac. Such an attacker can still pause/unpause remote commands, queue
+fetches and searches and read metadata; the kill switch remains. Root on the server can still
+serve modified JS (attacker C, out of scope).
 
 ## Decisions (from the grilling session)
 
 1. **E2E between Mac agent and browser.** The server stores and relays ciphertext only.
-   Optional: `E2E_ENCRYPTION=true|false` (default `false`). With `false` everything behaves
-   exactly as today — no behavior change, no new requests, no new assets loaded.
+   Optional: `E2E_ENCRYPTION=true|false` (default `false`). With `false` the user-visible
+   behavior is as before and the browser loads no E2E assets. The only changes for the agent in
+   plaintext mode: it performs a handshake per cycle and one full resync after upgrade; no
+   other behavior change.
 2. **Search in E2E mode is an agent job.** The Mac searches its local plaintext and returns
    encrypted matching session ids. In plaintext mode FTS5 search stays as is.
 3. **Key from a passphrase via Argon2id.** Salt, KDF parameters and a key-check value live
@@ -55,7 +60,8 @@ remote command execution on the Mac. E2E does not change that; it is a separate 
 8. **On the Mac** the derived master key (never the passphrase) is stored in the launchd
    plist (`AI_REMOTE_E2E_KEY`), file mode `600`.
 9. **In the browser** a non-extractable `CryptoKey` lives in IndexedDB until logout or
-   until `API_KEY` / the passphrase is rotated.
+   until logout, a visit to the login page, or `API_KEY` / passphrase rotation (detected at the
+   next page load).
 10. **Both sides configure the mode explicitly, fail-closed.** The agent compares its own
     `AI_REMOTE_E2E` with the server's mode and its key with the server's key check on every
     cycle; on any mismatch it sends nothing and claims no jobs. The backend independently
@@ -104,11 +110,16 @@ sends them base64-encoded in `data_b64` as today.
 | Session title | `session\|<session_id>\|title` | title text |
 | Session preview | `session\|<session_id>\|preview` | JSON `{"text": str, "html": str}` |
 | Message | `msg\|<session_id>\|<idx>` | rendered, sanitized HTML |
-| Resume prompt | `job-prompt\|resume_message\|<session_id>` | prompt text |
-| New-session prompt | `job-prompt\|new_session\|<project_path>\|<tool>` | prompt text |
+| Resume prompt | `job-prompt\|resume_message\|<session_id>` | prompt envelope (below) |
+| New-session prompt | `job-prompt\|new_session\|<project_path>\|<tool>` | prompt envelope (below) |
 | Search query | `job-prompt\|search` | query text |
 | Job result | `job-result\|<job_id>` | result text (for `search`: JSON `{"ids": [...]}`) |
 | Image | `image\|<session_id>\|<path_key>` | raw image bytes |
+
+**Prompt envelope** (replay protection): the plaintext of resume and new-session prompts is the
+JSON `{"v":1,"prompt":<str>,"rid":<32 lowercase hex, 16 random bytes>,"ts":<ms since epoch>}`.
+The agent accepts each `rid` once and rejects envelopes older than 1 h, so an `API_KEY` holder
+cannot replay or forge prompts. The jobs page shows `prompt` (raw text if not an envelope).
 
 AAD prevents the server from swapping ciphertexts between records (e.g. moving a prompt to
 another project). That is an active attack and out of scope, but it costs nothing.
@@ -166,7 +177,8 @@ In plaintext mode: `{"e2e": false, "epoch": "...", "salt": null, "kdf": null, "k
 - 422 on invalid salt (16–64 bytes), kdf (alg/ranges) or key_check (64 lowercase hex).
 - Params unset → store, 200.
 - Params set and identical → 200 (idempotent).
-- Params set and different: `reset=false` → 409; `reset=true` → wipe + new epoch + store.
+- Params set and different: `reset=false` → 409; `reset=true` → wipe + new epoch + store (params are set NULL during the wipe, so a
+  failed wipe leaves the server unconfigured, not half-rotated).
 - Returns the handshake JSON.
 
 ### Ingest validation in E2E mode
@@ -197,12 +209,13 @@ Ciphertext check: `value.startswith("e2e1:")` and the rest matches `[A-Za-z0-9_-
 
 - `POST /chats/{id}/command` and `POST /projects/command`: `prompt` must be ciphertext
   (max length 171,000 characters of ciphertext) → else 422. Plaintext mode unchanged (max 32,000).
-- `POST /search` (new, session auth) `{"query": ciphertext}` → creates job `search`
+- `POST /search` (new, session auth) `{"query": ciphertext}` → 409 if a search is already
+  pending/running; otherwise creates job `search`
   (target `*`, payload `{"query": ciphertext}`), returns `{job_id, eta_seconds}`. 409 in
   plaintext mode. Not affected by the remote-command kill switch (read-only, like
   `fetch_full`).
-- `GET /` with `ids=<comma-separated session ids>` (max 100): restricts the list to those
-  ids (both modes; harmless metadata). In E2E mode `q` is ignored server-side and
+- `POST /` with form fields `ids` (comma-separated session ids, max 100), `tool`, `project`,
+  `group`, `sort`: restricts the list to those ids (ids never appear in the URL) (both modes; harmless metadata). In E2E mode `q` is ignored server-side and
   `sort=title_asc` falls back to `date_desc` (the option is hidden).
 - `POST /chats/{id}/fetch-image`: in E2E mode the "path appears in a message" check is
   skipped (the server cannot read messages); `is_image_path` still applies. The agent keeps
@@ -287,8 +300,8 @@ Flow:
    with an allow-list equal to the bleach list plus `button` and `data-*` attributes; never
    `img`, `style`, `on*`.
 4. After decryption: `window.e2eReady` resolves; app.js runs its content initializers
-   (table sorting, copy buttons) after it. In plaintext mode `e2eReady` is an already
-   resolved promise — behavior identical.
+   (table sorting, copy buttons) after it. In plaintext mode `e2eReady` is undefined
+   (e2e.js is not loaded) and app.js falls back to an already resolved promise.
 5. Images: buttons whose `path_key` (SHA-256 of `session_id\0path`, first 32 hex) is in
    the page's available-keys list are loaded automatically; others on click as today.
    Bytes are fetched, decrypted, mime sniffed from magic bytes, shown via `blob:` URL.
