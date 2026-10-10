@@ -44,6 +44,11 @@ MAX_SYNC_BATCHES_PER_CYCLE = 5
 def _push_in_batches(config: Config, client: httpx.Client, deltas: list[dict], synced: dict, keys) -> None:
     for start in range(0, min(len(deltas), SYNC_BATCH_SIZE * MAX_SYNC_BATCHES_PER_CYCLE), SYNC_BATCH_SIZE):
         batch = deltas[start:start + SYNC_BATCH_SIZE]
+        # Cursor messages come from one big SQLite store; load them only for what is sent
+        # now, not for every unsynced session on every cycle of a long resync.
+        cursor_batch = [s for s in batch if s["id"].startswith("cursor:")]
+        if cursor_batch:
+            cursor_source.enrich_with_messages(cursor_batch)
         if keys is None:
             outgoing, pushed = batch, batch
         else:
@@ -80,11 +85,7 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
 
     synced = state.load_synced_ids(config.state_path)
 
-    changed_cursor_sessions = state.compute_deltas(cursor_sessions, synced)
-    cursor_source.enrich_with_messages(changed_cursor_sessions)
-
-    all_sessions = claude_sessions + changed_cursor_sessions
-    deltas = state.compute_deltas(all_sessions, synced)
+    deltas = state.compute_deltas(claude_sessions + cursor_sessions, synced)
     _push_in_batches(config, client, deltas, synced, keys)
 
     next_interval = None

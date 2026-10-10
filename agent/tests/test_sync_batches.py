@@ -42,3 +42,16 @@ def test_failed_batch_keeps_earlier_batches_and_stops_pushing(tmp_path, monkeypa
     synced = state.load_synced_ids(config.state_path)
     assert set(synced) == set(pushes[0])
     assert jobs_polled
+
+
+def test_cursor_sessions_are_enriched_per_batch_only(tmp_path, monkeypatch):
+    cursor = [{"id": f"cursor:c{i:03d}", "last_updated_at": "t1"} for i in range(150)]
+    monkeypatch.setattr("agent.claude_code_source.list_claude_code_sessions", lambda: [])
+    monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: cursor)
+    enriched = []
+    monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda s: enriched.extend(x["id"] for x in s))
+    monkeypatch.setattr("agent.uploader.push_sync", lambda *a, **kw: True)
+    monkeypatch.setattr("agent.jobs.fetch_pending_jobs", lambda *a: {"jobs": [], "poll_interval_seconds": 60})
+    config = main.Config(backend_url="http://b", api_key="k", state_path=tmp_path / "sync_state.json")
+    main.run_cycle(config, client=None)
+    assert len(enriched) == 100  # only the sessions pushed this cycle, not all 150
