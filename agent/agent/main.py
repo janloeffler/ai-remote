@@ -20,11 +20,11 @@ def _execute_job(job: dict, config: Config, client: httpx.Client, keys) -> dict:
         return executor.execute_fetch_full(job, config.enabled_tools)
     if job["type"] == "resume_message":
         if keys is not None:
-            job = seal.open_job_prompt(job, keys)
+            job = seal.open_job_prompt(job, keys, config.state_path)
         return executor.execute_resume_message(job, config.allowed_projects, config.enabled_tools)
     if job["type"] == "new_session":
         if keys is not None:
-            job = seal.open_job_prompt(job, keys)
+            job = seal.open_job_prompt(job, keys, config.state_path)
         return executor.execute_new_session(job, config.allowed_projects, config.enabled_tools)
     if job["type"] == "fetch_image" and config.image_upload_enabled:
         return images.execute_fetch_image(job, config, client, keys)

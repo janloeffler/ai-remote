@@ -20,6 +20,7 @@ import sys
 import httpx
 
 from . import e2e
+from .state import IMAGES_STATE_FILENAME
 
 
 def fetch(config, client: httpx.Client) -> tuple[int, dict | None]:
@@ -52,7 +53,7 @@ def _apply_epoch(config, epoch) -> None:
         return
     if _stored_epoch(config) == epoch:
         return
-    for path in (config.state_path, config.state_path.with_name("images_state.json")):
+    for path in (config.state_path, config.state_path.with_name(IMAGES_STATE_FILENAME)):
         try:
             path.unlink()
         except FileNotFoundError:

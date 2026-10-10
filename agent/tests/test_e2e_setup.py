@@ -137,3 +137,10 @@ def test_old_server_404(capsys):
     s.client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
     rc, _, err = run(s, capsys)
     assert rc == 1 and "404" in err
+
+
+def test_non_json_handshake_body(capsys):
+    s = Server(hs())
+    s.client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>login</html>")))
+    rc, _, err = run(s, capsys)
+    assert rc == 1 and "did not return JSON" in err and "Traceback" not in err

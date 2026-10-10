@@ -70,8 +70,9 @@ def _run_subprocess(cmd: list[str], cwd: str) -> tuple[int, str, bool]:
     """Runs cmd in its own process group (start_new_session=True) so that on timeout
     we can kill the whole group, not just the direct child — otherwise anything the
     CLI itself spawns would be left running as an orphan after we give up on it."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AI_REMOTE_")}
     proc = subprocess.Popen(
-        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
     )
     try:
         output, _ = proc.communicate(timeout=COMMAND_TIMEOUT_SECONDS)

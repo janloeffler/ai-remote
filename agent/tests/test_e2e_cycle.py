@@ -1,5 +1,7 @@
 import base64
 import json
+import secrets
+import time
 
 import pytest
 
@@ -14,6 +16,11 @@ pytestmark = pytest.mark.real_handshake
 
 def _enc_prompt(text, aad):
     return e2e.encrypt_text(KEYS, text, aad)
+
+
+def _enc_job_prompt(text, aad):
+    env = {"v": 1, "prompt": text, "rid": secrets.token_hex(16), "ts": int(time.time() * 1000)}
+    return e2e.encrypt_text(KEYS, json.dumps(env), aad)
 
 
 @pytest.fixture
@@ -52,7 +59,7 @@ def test_canary_never_leaves_the_machine_in_plaintext(world):
             "id": "j2",
             "type": "resume_message",
             "target": SID,
-            "payload": json.dumps({"prompt": _enc_prompt("please CANARY-7f3a", e2e.aad_resume_prompt(SID))}),
+            "payload": json.dumps({"prompt": _enc_job_prompt("please CANARY-7f3a", e2e.aad_resume_prompt(SID))}),
         },
         {
             "id": "j3",
@@ -110,8 +117,8 @@ def test_canary_never_leaves_the_machine_in_plaintext(world):
 
 
 def test_unreadable_prompt_fails_job_without_launching(world):
-    wrong = _enc_prompt("do it", e2e.aad_resume_prompt("claude-code:other"))
-    new_wrong = _enc_prompt("x", e2e.aad_new_session_prompt("/other", "claude-code"))
+    wrong = _enc_job_prompt("do it", e2e.aad_resume_prompt("claude-code:other"))
+    new_wrong = _enc_job_prompt("x", e2e.aad_new_session_prompt("/other", "claude-code"))
     jobs = [
         {"id": "j1", "type": "resume_message", "target": SID, "payload": json.dumps({"prompt": wrong})},
         {"id": "j2", "type": "resume_message", "target": SID, "payload": json.dumps({"prompt": "not encrypted"})},
@@ -133,7 +140,7 @@ def test_unreadable_prompt_fails_job_without_launching(world):
 
 def test_new_session_prompt_decrypted_with_project_and_tool_aad(world):
     p = str(world["tmp"])
-    prompt = _enc_prompt("build", e2e.aad_new_session_prompt(p, "claude-code"))
+    prompt = _enc_job_prompt("build", e2e.aad_new_session_prompt(p, "claude-code"))
     job = {"id": "j1", "type": "new_session", "target": p, "payload": json.dumps({"prompt": prompt, "tool": "claude-code"})}
     backend = Backend(handshake=(200, handshake_body(True)), jobs=[job])
     main.run_cycle(_cfg(world), backend.client)

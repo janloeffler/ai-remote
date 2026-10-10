@@ -408,3 +408,19 @@ def test_profile_with_no_recognizable_entries_is_refused(tmp_path):
     _write_profile(project, "claude-code", {"permissions": {"allow": ["nonsense"], "deny": []}})
 
     assert "recognizable" in permission_profile.missing_profile_reason(str(project), "claude-code")
+
+
+def test_child_process_does_not_inherit_ai_remote_secrets(monkeypatch):
+    import sys
+
+    from agent import executor
+
+    monkeypatch.setenv("AI_REMOTE_API_KEY", "secret")
+    monkeypatch.setenv("AI_REMOTE_E2E_KEY", "secret")
+    monkeypatch.setenv("KEEP_ME", "yes")
+    code, out, timed_out = executor._run_subprocess(
+        [sys.executable, "-c", "import os; print(sorted(os.environ))"], "/"
+    )
+    assert code == 0 and not timed_out
+    assert "AI_REMOTE_" not in out
+    assert "KEEP_ME" in out and "PATH" in out

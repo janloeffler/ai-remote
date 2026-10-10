@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from . import claude_code_source, cursor_source, e2e, render_core, uploader
+from .state import IMAGES_STATE_FILENAME
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADS_PER_CYCLE = 10
@@ -105,7 +106,7 @@ def upload_pasted_images(
     Remembered locally once sent, so an image the server has since expired is not pushed
     again — it is then fetched on demand if someone still wants it.
     """
-    state_path = config.state_path.with_name("images_state.json")
+    state_path = config.state_path.with_name(IMAGES_STATE_FILENAME)
     uploaded = _load_state(state_path)
     budget = MAX_UPLOADS_PER_CYCLE
     changed = False

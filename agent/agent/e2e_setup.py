@@ -36,7 +36,13 @@ def _handshake(client: httpx.Client, base: str, headers: dict) -> dict:
         raise SetupError("The backend rejected AI_REMOTE_API_KEY.")
     if resp.status_code != 200:
         raise SetupError(f"Handshake failed: HTTP {resp.status_code}")
-    return resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise SetupError("Handshake failed: the backend did not return JSON (wrong URL or proxy?).") from exc
+    if not isinstance(data, dict):
+        raise SetupError("Handshake failed: unexpected response from the backend.")
+    return data
 
 
 def _new_passphrase(getpass_fn) -> str:

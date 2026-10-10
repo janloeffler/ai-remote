@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+IMAGES_STATE_FILENAME = "images_state.json"
 DEFAULT_STATE_PATH = Path.home() / ".ai-remote-agent" / "sync_state.json"
 
 

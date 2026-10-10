@@ -45,7 +45,12 @@ never the passphrase). The setup step on its own:
 
     AI_REMOTE_BACKEND_URL=https://your-domain.example.com AI_REMOTE_API_KEY=<key> \
     .venv/bin/python -m agent.e2e_setup            # prints the key on stdout
-    .venv/bin/python -m agent.e2e_setup --rotate   # new passphrase; the server drops its cache
+    .venv/bin/python -m agent.e2e_setup --rotate   # debugging only, see below
+
+Rotate the passphrase with `./setup-agent.sh --rotate-passphrase`: it stops the agent,
+rotates (the server drops its cache) and updates the plist. The bare
+`python -m agent.e2e_setup --rotate` is for debugging only: it leaves the plist with the
+old key, so the running agent would stop syncing.
 
 Every cycle starts with `GET /agent/handshake`. The agent sends nothing and claims no jobs
 when its mode differs from the server's, when the server has no parameters yet, or when
@@ -56,7 +61,11 @@ forgets what it synced and pushes everything again.
 In E2E mode the agent renders each message to HTML with `agent/render_core.py` (a
 byte-identical copy of `backend/app/render_core.py`; a test keeps them in sync) and
 encrypts titles, previews, messages, job results and images before they leave the Mac.
-Search runs here, as a `search` job. Design: `docs/superpowers/specs/2026-10-09-e2e-encryption-design.md`.
+Search runs here, as a `search` job. Encrypted prompts carry a random id and timestamp
+inside the ciphertext; the agent rejects expired or already-used ones (replay protection,
+used ids are kept in `used_prompt_ids.json` next to the sync state). The agent now needs
+its Python dependencies (`agent/requirements.txt`) installed even in plaintext mode;
+`setup-agent.sh` and `update-agent.sh` do that. Design: `docs/superpowers/specs/2026-10-09-e2e-encryption-design.md`.
 
 ## Remote command execution (resume/new-session)
 

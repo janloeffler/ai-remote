@@ -5,6 +5,10 @@ must never be mutated.
 """
 
 import json
+import os
+import re
+import time
+from pathlib import Path
 
 from . import e2e
 from .render_core import ImageContext, render_markdown
@@ -47,10 +51,74 @@ class PromptError(Exception):
     pass
 
 
-def open_job_prompt(job: dict, keys: e2e.Keys) -> dict:
+MAX_PROMPT_CHARS = 32_000
+PROMPT_MAX_AGE_MS = 60 * 60 * 1000
+PROMPT_MAX_FUTURE_MS = 5 * 60 * 1000
+USED_IDS_RETENTION_MS = 2 * 60 * 60 * 1000
+_RID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def used_ids_path(state_path: Path) -> Path:
+    return state_path.with_name("used_prompt_ids.json")
+
+
+def _load_used(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and type(v) is int}
+
+
+def _save_used(path: Path, used: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(used))
+    os.replace(tmp, path)
+
+
+def _unwrap_envelope(plaintext: str) -> tuple[str, str, int]:
+    try:
+        env = json.loads(plaintext)
+    except json.JSONDecodeError as exc:
+        raise PromptError("invalid prompt envelope") from exc
+    if (
+        not isinstance(env, dict)
+        or type(env.get("v")) is not int
+        or env["v"] != 1
+        or not isinstance(env.get("prompt"), str)
+        or not isinstance(env.get("rid"), str)
+        or not _RID_RE.fullmatch(env["rid"])
+        or type(env.get("ts")) is not int
+    ):
+        raise PromptError("invalid prompt envelope")
+    return env["prompt"], env["rid"], env["ts"]
+
+
+def _claim_prompt_id(state_path: Path, rid: str, ts: int, now_ms: int) -> None:
+    """Rejects a replayed rid, otherwise records it durably (before the command runs)."""
+    if ts < now_ms - PROMPT_MAX_AGE_MS or ts > now_ms + PROMPT_MAX_FUTURE_MS:
+        raise PromptError("prompt expired")
+    path = used_ids_path(state_path)
+    used = _load_used(path)
+    if rid in used:
+        raise PromptError("prompt already used (replay)")
+    used = {k: v for k, v in used.items() if v >= now_ms - USED_IDS_RETENTION_MS}
+    used[rid] = ts
+    try:
+        _save_used(path, used)
+    except OSError as exc:
+        raise PromptError("cannot record prompt id") from exc
+
+
+def open_job_prompt(job: dict, keys: e2e.Keys, state_path: Path) -> dict:
     """Copy of a resume_message/new_session job with the payload prompt decrypted.
 
-    Raises PromptError when it cannot be decrypted with the AAD of this very job.
+    The plaintext is an envelope {"v":1,"prompt","rid","ts"}; stale, replayed or malformed
+    prompts raise PromptError. Raises PromptError when it cannot be decrypted with the AAD
+    of this very job.
     """
     try:
         payload = json.loads(job.get("payload") or "{}")
@@ -66,9 +134,13 @@ def open_job_prompt(job: dict, keys: e2e.Keys) -> dict:
             raise PromptError("cannot decrypt prompt")
         aad = e2e.aad_new_session_prompt(job["target"], tool)
     try:
-        prompt = e2e.decrypt_text(keys, payload["prompt"], aad)
+        plaintext = e2e.decrypt_text(keys, payload["prompt"], aad)
     except (ValueError, TypeError) as exc:
         raise PromptError("cannot decrypt prompt") from exc
+    prompt, rid, ts = _unwrap_envelope(plaintext)
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise PromptError("prompt too long")
+    _claim_prompt_id(state_path, rid, ts, int(time.time() * 1000))
     opened = dict(job)
     opened["payload"] = json.dumps({**payload, "prompt": prompt})
     return opened
