@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 # element, and nothing else bounded them (SEC-014). Generous enough for a pasted stack
 # trace or diff, small enough that it can't be used to inflate the database.
 PROMPT_MAX_LENGTH = 32_000
+# Most session ids a POST / filter may carry (E2E search results).
+SEARCH_MAX_IDS = 100
 # Ciphertext is longer than its plaintext (nonce, tag, base64): room for 32,000 characters at
 # worst-case 4 UTF-8 bytes each. The browser enforces the 32,000-character plaintext limit.
 PROMPT_MAX_LENGTH_E2E = 171_000

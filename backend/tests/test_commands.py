@@ -354,3 +354,10 @@ def test_all_tools_disabled_shows_error(logged_in_client, monkeypatch):
     monkeypatch.setattr(settings, "DEFAULT_TOOL", None)
     assert "CLAUDE_CODE_ENABLED" in logged_in_client.get("/").text
     assert "CLAUDE_CODE_ENABLED" in logged_in_client.get("/projects/new").text
+
+
+def test_plaintext_prompt_too_long_detail(logged_in_client):
+    from app.models import PROMPT_MAX_LENGTH
+
+    r = logged_in_client.post("/chats/claude-code:abc/command", json={"prompt": "x" * (PROMPT_MAX_LENGTH + 1)})
+    assert r.status_code == 422 and r.json()["detail"] == "prompt too long"

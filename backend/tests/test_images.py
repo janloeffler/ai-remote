@@ -222,3 +222,13 @@ def test_markdown_token_nonce_is_per_call():
     finally:
         render_core._tokenize_images = orig
     assert seen[0] != seen[1] and all(re.fullmatch(r"[0-9a-f]{16}", n) for n in seen)
+
+
+def test_markdown_tokens_in_attributes_become_plain_paths():
+    ctx = ImageContext(session_id=SID)
+    link = render_markdown("[x](/a.png)", ctx)
+    assert 'href="/a.png"' in link and "image-fetch" not in link and "@@IMG" not in link
+    titled = render_markdown('[t](https://e.com "/b.png")', ctx)
+    assert 'title="/b.png"' in titled and "image-fetch" not in titled and "@@IMG" not in titled
+    assert render_markdown("see /c.png now", ctx).count('class="image-fetch"') == 1
+    assert render_markdown(f"[Image: source: {PASTED}]", ctx).count('class="image-fetch"') == 1

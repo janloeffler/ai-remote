@@ -320,6 +320,13 @@ def create_job(conn: sqlite3.Connection, job_type: str, target: str, payload: st
     return job_id
 
 
+def has_active_job(conn: sqlite3.Connection, job_type: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE type = ? AND status IN ('pending', 'running') LIMIT 1", (job_type,)
+    ).fetchone()
+    return row is not None
+
+
 def claim_pending_jobs(conn: sqlite3.Connection) -> list[dict]:
     query = "SELECT * FROM jobs WHERE status = 'pending'"
     if get_remote_commands_paused(conn):

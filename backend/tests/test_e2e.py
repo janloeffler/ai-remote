@@ -399,15 +399,26 @@ def test_search_max_length_boundary(enc):
     assert enc.post("/search", json={"query": ok}).status_code == 200
 
 
-def test_ids_filter_both_modes(plain):
+def test_ids_only_via_post_never_in_get(plain):
     sync(plain, session("claude-code:a"), session("claude-code:b"))
     ids = lambda r: sorted(s["id"] for s in r.context["sessions"])
-    assert ids(plain.get("/?ids=claude-code:a")) == ["claude-code:a"]
-    assert ids(plain.get("/?ids=claude-code:a,claude-code:b, ,nope")) == ["claude-code:a", "claude-code:b"]
-    assert ids(plain.get("/?ids=nope")) == []
+    assert len(ids(plain.get("/?ids=claude-code:a"))) == 2  # GET ignores ids
+    post = lambda v: plain.post("/", data={"ids": v})
+    assert ids(post("claude-code:a")) == ["claude-code:a"]
+    assert ids(post("claude-code:a,claude-code:b, ,nope")) == ["claude-code:a", "claude-code:b"]
+    assert ids(post("nope")) == []
+    assert ids(post("")) == []
     assert len(ids(plain.get("/"))) == 2
-    assert plain.get("/?ids=" + ",".join(f"i{n}" for n in range(101))).status_code == 422
-    assert plain.get("/?ids=" + ",".join(f"i{n}" for n in range(100))).status_code == 200
+    assert post(",".join(f"i{n}" for n in range(101))).status_code == 422
+    assert post(",".join(f"i{n}" for n in range(100))).status_code == 200
+
+
+def test_post_list_keeps_filters_and_requires_session(plain, enc):
+    sync(plain, session("claude-code:a"))
+    r = plain.post("/", data={"ids": "claude-code:a", "tool": "cursor", "sort": "date_asc"})
+    assert r.context["sessions"] == [] and r.context["sort"] == "date_asc"
+    plain.cookies.clear()
+    assert plain.post("/", data={"ids": "x"}, follow_redirects=False).status_code in (303, 307, 401)
 
 
 def test_e2e_ignores_q_and_title_sort(enc):
@@ -417,8 +428,10 @@ def test_e2e_ignores_q_and_title_sort(enc):
     assert r.context["sort"] == "date_desc" and r.context["q"] is None
     assert 'value="title_asc"' not in r.text
     assert 'name="q"' not in r.text
-    r = enc.get("/?ids=claude-code:a")
+    r = enc.post("/", data={"ids": "claude-code:a"})
     assert 'name="ids" value="claude-code:a"' in r.text and 'href="/"' in r.text
+    assert '<form method="post" action="/" class="toolbar">' in r.text
+    assert '<form method="get" action="/" class="toolbar">' in enc.get("/").text
 
 
 # --- prompts -----------------------------------------------------------------------
@@ -607,16 +620,17 @@ def test_wipe_drops_leftover_jobs_old(conn):
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'jobs_old'").fetchone() is None
 
 
-def test_reset_changes_params_and_epoch_in_one_update(conn, monkeypatch):
+def test_reset_nulls_params_with_the_new_epoch_then_stores_new_ones(conn, monkeypatch):
     conn.execute("UPDATE e2e_state SET mode = 'e2e'")
     e2e.set_params(conn, SALT, KDF, CHECK)
     epoch = e2e.get_state(conn)["epoch"]
     seen = []
     real = e2e.wipe_content
-    monkeypatch.setattr(e2e, "wipe_content", lambda c: (real(c), seen.append(e2e.get_state(c)))[0])
+    monkeypatch.setattr(e2e, "wipe_content", lambda c, **kw: (real(c, **kw), seen.append(e2e.get_state(c)))[0])
     e2e.set_params(conn, SALT, KDF, "cd" * 32, reset=True)
-    # the wipe itself already starts a new epoch; params still old until the final UPDATE
-    assert seen[0]["epoch"] != epoch and seen[0]["key_check"] == CHECK
+    # the wipe starts the new epoch and nulls the old params in one transaction: agents fail closed
+    assert seen[0]["epoch"] != epoch
+    assert seen[0]["key_check"] is None and seen[0]["salt"] is None and seen[0]["kdf"] is None
     state = e2e.get_state(conn)
     assert state["epoch"] != epoch and state["key_check"] == "cd" * 32
 
@@ -712,7 +726,7 @@ def test_params_reset_wipe_failure_is_503_then_retry(enc, env, monkeypatch):
         r = enc.put("/agent/e2e-params", headers=KEY, json=other)
     assert r.status_code == 503 and "retry" in r.json()["detail"]
     hs = enc.get("/agent/handshake", headers=KEY).json()
-    assert hs["salt"] == SALT and hs["epoch"] != epoch
+    assert hs["salt"] is None and hs["key_check"] is None and hs["epoch"] != epoch  # fail closed
     assert db.get_sessions(raw_conn(env)) == []
     r = enc.put("/agent/e2e-params", headers=KEY, json=other)
     assert r.status_code == 200 and r.json()["salt"] == other["salt"]
@@ -727,3 +741,60 @@ def test_invalid_mode_header_is_400(plain, value):
 def test_mode_header_whitespace_is_stripped(plain):
     r = plain.post("/sync/index", headers={**KEY, "X-AI-Remote-E2E": " 0 "}, json={"sessions": [session()]})
     assert r.status_code == 200
+
+
+def test_search_is_one_at_a_time(enc):
+    assert enc.post("/search", json={"query": ct()}).status_code == 200
+    r = enc.post("/search", json={"query": ct()})
+    assert r.status_code == 409 and r.json()["detail"] == "a search is already running"
+
+
+def test_search_allowed_again_after_the_job_finished(enc, env):
+    c = raw_conn(env)
+    job_id = enc.post("/search", json={"query": ct()}).json()["job_id"]
+    c.execute("UPDATE jobs SET status = 'done' WHERE id = ?", (job_id,))
+    c.commit()
+    assert enc.post("/search", json={"query": ct()}).status_code == 200
+
+
+def test_params_503_on_sqlite_error(enc, monkeypatch):
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(e2e, "set_params", boom)
+    assert enc.put("/agent/e2e-params", headers=KEY, json=PARAMS).status_code == 503
+
+
+def test_kdf_version_must_be_19(enc):
+    for kdf in ({k: v for k, v in PARAMS["kdf"].items() if k != "v"}, {**PARAMS["kdf"], "v": 16}):
+        r = enc.put("/agent/e2e-params", headers=KEY, json={**PARAMS, "kdf": kdf})
+        assert r.status_code == 422
+
+
+def test_reconcile_on_empty_db_logs_neutrally(conn, caplog):
+    e2e.reconcile_mode(conn, False)
+    with caplog.at_level(logging.INFO):
+        e2e.reconcile_mode(conn, True)
+    assert "empty database" in caplog.text and "backups" not in caplog.text
+    assert e2e.get_state(conn)["mode"] == "e2e"
+
+
+def test_html_pages_carry_csp_and_framing_headers(plain):
+    for r in (plain.get("/"), plain.get("/settings")):
+        csp = r.headers["content-security-policy"]
+        assert "script-src 'self' 'wasm-unsafe-eval'" in csp and "frame-ancestors 'none'" in csp
+        assert "unsafe-inline" not in csp
+        assert r.headers["x-frame-options"] == "DENY" and r.headers["referrer-policy"] == "no-referrer"
+
+
+def test_base_template_has_no_inline_executable_script():
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent / "app" / "templates"
+    for page in root.glob("*.html"):
+        for m in re.finditer(r"<script\b([^>]*)>", page.read_text()):
+            attrs = m.group(1)
+            assert "src=" in attrs or "application/json" in attrs, f"{page.name}: inline script"
+        assert "style=" not in page.read_text(), f"{page.name}: inline style"
+    assert (Path(__file__).parent.parent / "app" / "static" / "theme.js").is_file()

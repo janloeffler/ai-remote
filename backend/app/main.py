@@ -3,6 +3,7 @@ import hashlib
 import binascii
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ from .datetime_filter import format_datetime
 from .markdown_filter import ImageContext, render_markdown
 from .models import (
     PROMPT_MAX_LENGTH,
+    SEARCH_MAX_IDS,
     CommandRequest,
     E2EParamsRequest,
     FetchImageRequest,
@@ -45,6 +47,26 @@ app = FastAPI(
 )
 _cookie_https_only = os.environ.get("SESSION_COOKIE_HTTPS_ONLY", "true").lower() == "true"
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY, https_only=_cookie_https_only)
+
+
+_HTML_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+        "img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+@app.middleware("http")
+async def _html_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        for name, value in _HTML_SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+    return response
 
 
 @app.middleware("http")
@@ -183,7 +205,7 @@ def agent_e2e_params(body: E2EParamsRequest, conn=Depends(db.get_db_dependency))
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    except RuntimeError:
+    except (RuntimeError, sqlite3.Error):
         raise HTTPException(
             status_code=503, detail="wiping server data failed; the data epoch changed, retry the request"
         )
@@ -268,6 +290,9 @@ def search(body: SearchRequest, conn=Depends(db.get_db_dependency)):
         raise HTTPException(status_code=409, detail="search jobs exist only in E2E mode")
     if not e2e.is_ciphertext(body.query):
         raise HTTPException(status_code=422, detail="query must be ciphertext")
+    db.fail_stale_jobs(conn)
+    if db.has_active_job(conn, "search"):
+        raise HTTPException(status_code=409, detail="a search is already running")
     job_id = db.create_job(conn, "search", "*", payload=json.dumps({"query": body.query}))
     interval = db.current_poll_interval_seconds(
         conn, settings.AI_REMOTE_INTERVAL_SECONDS, settings.AI_REMOTE_ACTIVE_INTERVAL_SECONDS
@@ -418,11 +443,10 @@ def logout(request: Request):
 def _check_prompt(text: str) -> None:
     """E2E: ciphertext only (cap on the ciphertext, sized for 32,000 plaintext characters). Plaintext keeps its 32,000 cap."""
     if settings.E2E_ENCRYPTION:
-        ok = e2e.is_ciphertext(text)
-    else:
-        ok = len(text) <= PROMPT_MAX_LENGTH
-    if not ok:
-        raise HTTPException(status_code=422, detail="prompt does not match the server's E2E mode or is too long")
+        if not e2e.is_ciphertext(text):
+            raise HTTPException(status_code=422, detail="prompt does not match the server's E2E mode")
+    elif len(text) > PROMPT_MAX_LENGTH:
+        raise HTTPException(status_code=422, detail="prompt too long")
 
 
 def _expand_home_dir(value: str) -> str:
@@ -450,11 +474,29 @@ def list_chats(
     q: str | None = None,
     sort: str = "date_desc",
     limit: int = 100,
-    ids: str | None = None,
     conn=Depends(db.get_db_dependency),
 ):
+    # No ids here: session ids must never appear in URLs (access logs); see POST / below.
+    return _render_list(request, conn, tool, project, group, q, sort, limit, None)
+
+
+@app.post("/", dependencies=[Depends(require_session)])
+def list_chats_restricted(
+    request: Request,
+    tool: str | None = Form(default=None),
+    project: str | None = Form(default=None),
+    group: str | None = Form(default=None),
+    sort: str = Form(default="date_desc"),
+    ids: str = Form(default=""),
+    conn=Depends(db.get_db_dependency),
+):
+    """The chat list restricted to the session ids of an E2E search, carried in the body."""
+    return _render_list(request, conn, tool, project, group, None, sort, 100, ids)
+
+
+def _render_list(request, conn, tool, project, group, q, sort, limit, ids):
     id_list = [i.strip() for i in (ids or "").split(",") if i.strip()]
-    if len(id_list) > 100:
+    if len(id_list) > SEARCH_MAX_IDS:
         raise HTTPException(status_code=422, detail="too many ids")
     if settings.E2E_ENCRYPTION:
         # The server holds ciphertext: no FTS and no title order. The query lives in the
@@ -479,6 +521,7 @@ def list_chats(
             "q": q,
             "sort": sort,
             "ids": ",".join(id_list),
+            "ids_restricted": ids is not None,
             "last_agent_contact": db.get_last_agent_contact(conn),
             "project_paths": db.get_distinct_project_paths(conn, settings.ENABLED_TOOLS),
             "enabled_tools": settings.ENABLED_TOOLS,

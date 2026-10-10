@@ -4,10 +4,10 @@
   {% if last_agent_contact %}{{ t('list.last_contact', dt=(last_agent_contact | localdt)) }}
   {% else %}{{ t('list.never_contact') }}{% endif %}
 </p>
-<form method="get" action="/" class="toolbar">
+<form method="{{ 'post' if e2e_enabled() and ids_restricted else 'get' }}" action="/" class="toolbar">
   {% if e2e_enabled() %}
   <input type="text" id="e2e-search" placeholder="{{ t('list.search') }}" autocomplete="off">
-  {% if ids %}<input type="hidden" name="ids" value="{{ ids }}">{% endif %}
+  {% if ids_restricted %}<input type="hidden" name="ids" value="{{ ids }}">{% endif %}
   {% else %}
   <input type="text" name="q" value="{{ q or '' }}" placeholder="{{ t('list.search') }}">
   {% endif %}
@@ -40,7 +40,7 @@
   </select>
   <button type="submit" id="filter-submit">{{ t('list.filter') }}</button>
 </form>
-{% if e2e_enabled() and ids %}
+{% if e2e_enabled() and ids_restricted %}
 <p class="search-note">{{ t('list.search_results') }} <a href="/">{{ t('list.search_clear') }}</a></p>
 {% endif %}
 <script type="application/json" id="project-paths-data">{{ {"paths": project_paths, "homeDir": local_home_dir} | tojson }}</script>

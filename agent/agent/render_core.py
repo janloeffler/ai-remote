@@ -49,6 +49,8 @@ class ImageContext:
 
 
 _FENCE_RE = re.compile(r"(```.*?```|~~~.*?~~~)", re.DOTALL)
+# A whole tag, quoted attribute values included (they may contain ">").
+_TAG_RE = re.compile(r"(<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>)")
 
 
 def _tokenize_images(text: str, refs: list[str], nonce: str) -> str:
@@ -121,7 +123,16 @@ def render_markdown(text: str, images: ImageContext | None = None) -> str:
         i = int(m.group(1))
         return _image_html(refs[i], images) if i < len(refs) else m.group(0)
 
-    return token_re.sub(restore, wrapped)
+    def plain(m: re.Match) -> str:
+        i = int(m.group(1))
+        return _html.escape(refs[i], quote=True) if i < len(refs) else m.group(0)
+
+    # Tokens become image HTML only in text nodes; one that ended up inside a tag (an href or
+    # title attribute) turns back into its plain, escaped path.
+    parts = _TAG_RE.split(wrapped)
+    for i, part in enumerate(parts):
+        parts[i] = token_re.sub(plain if i % 2 else restore, part)
+    return "".join(parts)
 
 
 def _wrap_bare_paths(html: str) -> str:

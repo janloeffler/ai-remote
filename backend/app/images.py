@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from . import db
-from .render_core import BARE_PATH_RE, IMAGE_EXTENSIONS, MARKER_RE, is_image_path, path_key  # noqa: F401  (re-exported)
+from .render_core import is_image_path, path_key  # noqa: F401  (used via images.* by main.py)
 
 KEY_RE = re.compile(r"[0-9a-f]{32}")
 _EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "application/octet-stream": "bin"}
@@ -39,6 +39,13 @@ def file_path(path_key: str, mime: str) -> Path:
     return image_dir() / f"{path_key}.{_EXTENSIONS[mime]}"
 
 
+def _write_atomic(target: Path, data: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(target)
+
+
 def store(conn, session_id: str, source_path: str, data: bytes) -> tuple[str, str]:
     """Validates and stores the bytes. Returns (path_key, mime); raises ValueError."""
     from . import settings  # lazy: settings insists on API_KEY/SECRET_KEY at import
@@ -50,10 +57,7 @@ def store(conn, session_id: str, source_path: str, data: bytes) -> tuple[str, st
         raise ValueError("not a supported image")
     key = path_key(session_id, source_path)
     target = file_path(key, mime)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_bytes(data)
-    tmp.replace(target)
+    _write_atomic(target, data)
     db.save_image(conn, session_id, key, source_path, mime, len(data))
     return key, mime
 
@@ -69,10 +73,7 @@ def store_encrypted(conn, session_id: str, source_path: str, data: bytes) -> str
     mime = "application/octet-stream"
     key = path_key(session_id, source_path)
     target = file_path(key, mime)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_bytes(data)
-    tmp.replace(target)
+    _write_atomic(target, data)
     db.save_image(conn, session_id, key, source_path, mime, len(data))
     return key
 

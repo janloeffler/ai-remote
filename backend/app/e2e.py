@@ -22,16 +22,12 @@ from . import db, images
 
 logger = logging.getLogger("ai_remote.e2e")
 
-CIPHERTEXT_PREFIX = "e2e1:"
 # 12-byte nonce + 16-byte GCM tag = 28 bytes = 38 base64url characters, minimum.
 CIPHERTEXT_RE = re.compile(r"e2e1:[A-Za-z0-9_-]{38,}")
 IMAGE_MAGIC = b"e2e1"
 IMAGE_OVERHEAD = 32  # magic + nonce + tag = 32 bytes: the ciphertext of a max-size image
 KEY_CHECK_RE = re.compile(r"[0-9a-f]{64}")
 KDF_RANGES = {"m": (19456, 1048576), "t": (2, 10), "p": (1, 4)}
-# 32,000 plaintext characters at worst-case 4 UTF-8 bytes each = 128,000 bytes + 28 bytes
-# nonce/tag -> 170,704 base64url characters + the 5-character prefix.
-PROMPT_MAX_LENGTH_E2E = 171_000
 CHECKPOINT_ATTEMPTS = 5
 CHECKPOINT_BACKOFF_SECONDS = 0.2
 
@@ -134,15 +130,25 @@ def _search_index_ddl() -> str:
     return match.group(0)
 
 
-def wipe_content(conn: sqlite3.Connection) -> None:
-    """Removes every cached chat byte the server holds. Raises if anything survives."""
+def wipe_content(conn: sqlite3.Connection, clear_params: bool = False) -> None:
+    """Removes every cached chat byte the server holds. Raises if anything survives.
+
+    ``clear_params`` also nulls salt/kdf/key_check in the same transaction as the deletes and the
+    epoch bump (passphrase reset): agents then fail closed until new params are stored.
+    """
     conn.commit()
     conn.execute("PRAGMA secure_delete = ON")
     for table in ("messages", "sessions", "jobs", "images"):
         conn.execute(f"DELETE FROM {table}")
     # New epoch in the same transaction as the deletes: once rows are gone the agent must resync,
     # even if a later step (VACUUM, WAL truncation) fails and raises.
-    conn.execute("UPDATE e2e_state SET data_epoch = ? WHERE id = 1", (new_epoch(),))
+    if clear_params:
+        conn.execute(
+            "UPDATE e2e_state SET data_epoch = ?, salt = NULL, kdf = NULL, key_check = NULL WHERE id = 1",
+            (new_epoch(),),
+        )
+    else:
+        conn.execute("UPDATE e2e_state SET data_epoch = ? WHERE id = 1", (new_epoch(),))
     # FTS5 deletes leave tombstoned plaintext in the segment shadow tables; dropping the
     # virtual table removes them.
     conn.execute("DROP TABLE IF EXISTS search_index")
@@ -197,21 +203,28 @@ def _start_new_epoch(conn: sqlite3.Connection, mode: str | None = None) -> None:
 def reconcile_mode(conn: sqlite3.Connection, enabled: bool) -> None:
     """Startup: when the configured mode differs from the stored one, wipe and switch."""
     wanted = "e2e" if enabled else "plain"
-    stored = get_state(conn)["mode"]
-    row = conn.execute("SELECT mode FROM e2e_state WHERE id = 1").fetchone()
+    stored_raw = conn.execute("SELECT mode FROM e2e_state WHERE id = 1").fetchone()["mode"]
+    stored = stored_raw or "plain"
     if stored == wanted:
-        if row["mode"] is None:  # legacy database: record the mode, nothing to wipe
+        if stored_raw is None:  # legacy database: record the mode, nothing to wipe
             conn.execute("UPDATE e2e_state SET mode = ? WHERE id = 1", (wanted,))
             conn.commit()
         return
+    had_data = any(
+        conn.execute(f"SELECT EXISTS (SELECT 1 FROM {table})").fetchone()[0]
+        for table in ("messages", "sessions", "jobs", "images")
+    )
     wipe_content(conn)
     _start_new_epoch(conn, wanted)
-    logger.warning(
-        "E2E mode changed %s->%s: server cache dropped, job history deleted, agent will resync. "
-        "Delete old backups of data/ yourself — they still contain plaintext.",
-        stored,
-        wanted,
-    )
+    if had_data:
+        logger.warning(
+            "E2E mode changed %s->%s: server cache dropped, job history deleted, agent will resync. "
+            "Delete old backups of data/ yourself — they still contain plaintext.",
+            stored,
+            wanted,
+        )
+    else:
+        logger.info("E2E mode set to %s (empty database)", wanted)
 
 
 def _validate_params(salt, kdf, key_check) -> dict:
@@ -232,7 +245,7 @@ def _validate_params(salt, kdf, key_check) -> dict:
         value = kdf.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
             raise ValueError(f"kdf.{name} must be an integer between {low} and {high}")
-    if "v" in kdf and kdf["v"] != 19:
+    if type(kdf.get("v")) is not int or kdf["v"] != 19:
         raise ValueError("kdf.v must be 19")
     if not isinstance(key_check, str) or KEY_CHECK_RE.fullmatch(key_check) is None:
         raise ValueError("key_check must be 64 lowercase hex characters")
@@ -251,11 +264,12 @@ def set_params(conn: sqlite3.Connection, salt, kdf, key_check, reset: bool = Fal
     if is_set:
         if not reset:
             raise ConflictError("E2E parameters already set; pass reset=true to replace them (wipes all data)")
-        wipe_content(conn)
+        wipe_content(conn, clear_params=True)
         logger.warning("E2E parameters reset: server cache dropped, job history deleted, agent will resync.")
-    # One statement: an agent must never see the new epoch together with the old key_check.
+    # On reset the wipe already bumped the epoch and nulled the old params in one transaction, so an
+    # agent never sees the new epoch together with the old key_check.
     conn.execute(
-        "UPDATE e2e_state SET salt = ?, kdf = ?, key_check = ?, data_epoch = COALESCE(?, data_epoch) WHERE id = 1",
-        (salt, json.dumps(kdf, sort_keys=True), key_check, new_epoch() if is_set else None),
+        "UPDATE e2e_state SET salt = ?, kdf = ?, key_check = ? WHERE id = 1",
+        (salt, json.dumps(kdf, sort_keys=True), key_check),
     )
     conn.commit()
