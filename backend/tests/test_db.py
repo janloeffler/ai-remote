@@ -507,3 +507,24 @@ def test_migration_adds_active_until_to_pre_existing_db(tmp_path):
     columns = {row["name"] for row in migrated_conn.execute("PRAGMA table_info(agent_status)").fetchall()}
     assert "active_until" in columns
     migrated_conn.close()
+
+
+def test_connection_can_be_used_from_another_thread(tmp_path):
+    # FastAPI may run a request's dependency and route on different threadpool threads.
+    import threading
+
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    db.init_db(conn)
+    errors = []
+
+    def use():
+        try:
+            conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
+        except Exception as exc:  # pragma: no cover - the failure being guarded against
+            errors.append(exc)
+
+    worker = threading.Thread(target=use)
+    worker.start()
+    worker.join()
+    conn.close()
+    assert errors == []

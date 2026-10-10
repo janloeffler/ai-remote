@@ -18,7 +18,11 @@ _SORT_CLAUSES = {
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=10)
+    # FastAPI may open a request's connection in its sync dependency on one threadpool
+    # thread and run the sync route on another; the default check then raised
+    # ProgrammingError (seen live as 500s on parallel image fetches). One connection still
+    # serves exactly one request, never two threads at once.
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     # WAL lets readers (the chat list) proceed while the agent writes
