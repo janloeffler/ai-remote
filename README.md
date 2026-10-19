@@ -98,7 +98,7 @@ via `docker-compose.yml`, the agent via `setup-agent.sh` at install time.
 | `AI_REMOTE_INTERVAL_SECONDS` | `60` | backend | Default (idle) poll interval. Only affects the agent's very first cycle — `setup-agent.sh` doesn't bake it into the installed launchd plist, so afterward the agent obeys whatever interval the backend reports. Can be overridden at runtime under **Settings**. |
 | `AI_REMOTE_ACTIVE_INTERVAL_SECONDS` | `10` | backend | Poll interval during an active window. Can be overridden at runtime under **Settings**. |
 | `ACTIVE_INTERVAL_DURATION_MIN` | `5` | backend | How long an active window lasts after any authenticated request from the phone (navigating, filtering, or a job-creating action). |
-| `AI_REMOTE_ALLOWED_PROJECTS` | *(empty = disabled)* | backend, agent | Comma-separated absolute project paths where remote commands may run. Must be set identically on both sides — two independently-checked copies, not synced automatically. |
+| `AI_REMOTE_ALLOWED_PROJECTS` | *(empty = disabled)* | backend, agent | Comma-separated absolute paths where remote commands may run; each entry allows its whole subtree (every subdirectory); a root of `/` is ignored (the agent also ignores `$HOME` and its ancestors). Must be set identically on both sides — two independently-checked copies, not synced automatically. |
 | `CLAUDE_CODE_ENABLED` | `true` | backend, agent | `false` hides Claude Code everywhere (list, filter, new session) and stops the agent from polling it. |
 | `CURSOR_ENABLED` | `true` | backend, agent | Same for Cursor. |
 | `IMAGE_UPLOAD_ENABLED` | `false` | backend + agent | Show chat images inline: the agent uploads pasted images automatically, linked image files (inside an allow-listed project) on click. Moves files to the server — opt in. Max 5 MB, PNG/JPEG/GIF/WebP. |
@@ -185,8 +185,9 @@ project paths, image paths, timestamps and message counts stay plaintext.
   attacker lock out the real owner by burning failed attempts from
   addresses that aren't theirs.
 - **Remote command execution:** commands only run inside directories listed
-  in `AI_REMOTE_ALLOWED_PROJECTS` (checked independently on both the
-  backend and the agent), and each allow-listed project also needs its own
+  in `AI_REMOTE_ALLOWED_PROJECTS` **or below them** (checked independently on
+  both the backend and the agent; the agent also resolves symlinks and `..`,
+  so a link out of an allowed tree does not count), and each job also needs a
   **tool-specific** permission profile — `.claude/settings.json` for Claude
   Code, using Claude Code's own `Bash(...)`/`Edit(...)` syntax
   ([template](docs/superpowers/reference/remote-agent-permissions.claude-code.json)),
@@ -195,8 +196,12 @@ project paths, image paths, timestamps and message counts stay plaintext.
   ([template](docs/superpowers/reference/remote-agent-permissions.cursor-cli.json)).
   The two are **not interchangeable** — see [`agent/README.md`](agent/README.md)
   for why a profile written in one tool's dialect is silently a no-op (or
-  denies nothing) in the other. Without a profile for a given project,
-  remote commands for that project fail closed rather than running
+  denies nothing) in the other. For Claude Code the profile may sit in the project's own
+  directory or in any parent up to the allow-listed root (the root-most valid one
+  is handed to the CLI via `--settings` so its denies always apply; an invalid
+  `<project>/.claude/settings.json` is refused); Cursor can only read
+  `<workspace>/.cursor/cli.json`, so there it must be in the workspace itself.
+  Without a profile, remote commands fail closed rather than running
   unconstrained. Leave `AI_REMOTE_ALLOWED_PROJECTS` empty to disable remote
   command execution entirely.
 - **Kill switch:** the pause button in the header (also under Settings) stops

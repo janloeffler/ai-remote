@@ -308,12 +308,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
-  const select = document.getElementById("project-select");
-  if (!select) return;
+  const input = document.getElementById("project-select");
+  if (!input) return;
   const last = localStorage.getItem("lastProject");
-  if (last && [...select.options].some((option) => option.value === last)) {
-    select.value = last;
-  }
+  if (last) input.value = last;
 });
 
 document.addEventListener("DOMContentLoaded", () => {

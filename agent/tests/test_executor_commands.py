@@ -424,3 +424,223 @@ def test_child_process_does_not_inherit_ai_remote_secrets(monkeypatch):
     assert code == 0 and not timed_out
     assert "AI_REMOTE_" not in out
     assert "KEEP_ME" in out and "PATH" in out
+
+
+# Subtree allow-list: an allowed root covers its subdirectories, and a Claude Code job
+# there may inherit the profile of an ancestor (at most up to the root) via --settings.
+def _new_session_job(path: Path, tool: str) -> dict:
+    return {
+        "id": "j1",
+        "type": "new_session",
+        "target": str(path),
+        "payload": json.dumps({"prompt": "hi", "tool": tool}),
+    }
+
+
+def _subtree(tmp_path: Path) -> tuple[Path, Path]:
+    """An allowed root with no profile of its own and a nested project below it."""
+    root = (tmp_path / "root").resolve()
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    return root, sub
+
+
+def test_subdirectory_inherits_claude_profile_from_allowed_root_via_settings_flag(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    profile = _write_profile(root, "claude-code").resolve()
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--settings") + 1] == str(profile)
+    assert cmd.index("--settings") < cmd.index("--")
+    assert captured["cwd"] == str(sub)
+
+
+def test_resume_in_subdirectory_inherits_claude_profile(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    profile = _write_profile(root, "claude-code").resolve()
+    monkeypatch.setattr("agent.claude_code_source.get_project_path", lambda raw_id: str(sub))
+    captured = _capture_cmd(monkeypatch)
+    job = {"id": "j1", "type": "resume_message", "target": "claude-code:abc", "payload": '{"prompt": "hi"}'}
+
+    result = executor.execute_resume_message(job, allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert ["--settings", str(profile)] == captured["cmd"][captured["cmd"].index("--settings") :][:2]
+
+
+def _settings_value(cmd: list[str]) -> str | None:
+    return cmd[cmd.index("--settings") + 1] if "--settings" in cmd else None
+
+
+def test_valid_cwd_profile_and_valid_root_pass_root_profile_via_settings(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    root_profile = _write_profile(root, "claude-code").resolve()
+    _write_profile(sub, "claude-code")
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert _settings_value(captured["cmd"]) == str(root_profile)
+
+
+def test_only_cwd_profile_adds_no_settings_flag(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    _write_profile(sub, "claude-code")
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert "--settings" not in captured["cmd"]
+
+
+def test_invalid_cwd_profile_is_rejected_even_with_valid_root_profile(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    _write_profile(root, "claude-code")
+    _write_profile(sub, "claude-code", {"permissions": {"allow": ["nonsense"]}})
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "project itself" in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_invalid_intermediate_profile_is_skipped(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    good = _write_profile(root, "claude-code").resolve()
+    _write_profile(root / "a", "claude-code", {"permissions": {"allow": ["nonsense"]}})
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert _settings_value(captured["cmd"]) == str(good)
+
+
+def test_no_cwd_profile_passes_root_profile(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    good = _write_profile(root, "claude-code").resolve()
+    _write_profile(root / "a", "claude-code")  # intermediate valid; root-most still wins
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert _settings_value(captured["cmd"]) == str(good)
+
+
+def test_home_user_settings_is_not_used_as_project_profile(tmp_path, monkeypatch):
+    home = (tmp_path / "home").resolve()
+    _write_profile(home, "claude-code")  # ~/.claude/settings.json
+    root = home / "work"
+    sub = root / "proj"
+    sub.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "missing permission profile" in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_root_slash_and_home_allow_list_entries_are_rejected(tmp_path, monkeypatch):
+    home = (tmp_path / "home").resolve()
+    proj = home / "proj"
+    proj.mkdir(parents=True)
+    _write_profile(proj, "claude-code")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    captured = _capture_cmd(monkeypatch)
+
+    for entry in ("/", str(home), str(home.parent)):
+        result = executor.execute_new_session(_new_session_job(proj, "claude-code"), allowed_projects=[entry])
+        assert result["status"] == "failed", entry
+        assert "not allow-listed" in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_cwd_and_workspace_receive_resolved_path(tmp_path, monkeypatch):
+    real = (tmp_path / "real").resolve()
+    real.mkdir()
+    _write_profile(real, "claude-code")
+    _write_profile(real, "cursor")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    captured = _capture_cmd(monkeypatch)
+
+    executor.execute_new_session(_new_session_job(link, "claude-code"), allowed_projects=[str(real)])
+    assert captured["cwd"] == str(real)
+
+    executor.execute_new_session(_new_session_job(link, "cursor"), allowed_projects=[str(real)])
+    assert captured["cwd"] == str(real)
+    assert captured["cmd"][captured["cmd"].index("--workspace") + 1] == str(real)
+
+
+def test_profile_above_allowed_root_is_not_used(tmp_path, monkeypatch):
+    # tmp_path itself carries valid profiles (autouse fixture) but sits above the root.
+    root, sub = _subtree(tmp_path)
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "missing permission profile" in result["result_text"]
+    assert str(root) in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_cursor_in_subdirectory_without_own_profile_is_rejected_even_if_root_has_one(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    _write_profile(root, "cursor")
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "cursor"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "workspace itself" in result["result_text"]
+    assert "only works for Claude Code" in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_cursor_in_subdirectory_with_own_profile_runs(tmp_path, monkeypatch):
+    root, sub = _subtree(tmp_path)
+    _write_profile(sub, "cursor")
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(sub, "cursor"), allowed_projects=[str(root)])
+
+    assert result["status"] == "done"
+    assert "--settings" not in captured["cmd"]
+
+
+def test_symlink_escaping_allowed_root_is_rejected_by_executor(tmp_path, monkeypatch):
+    root, _ = _subtree(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside)
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(_new_session_job(root / "link", "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "not allow-listed" in result["result_text"]
+    assert "cmd" not in captured
+
+
+def test_sibling_prefix_directory_is_rejected_by_executor(tmp_path):
+    root, _ = _subtree(tmp_path)
+    evil = tmp_path / "root-evil"
+    evil.mkdir()
+
+    result = executor.execute_new_session(_new_session_job(evil, "claude-code"), allowed_projects=[str(root)])
+
+    assert result["status"] == "failed"
+    assert "not allow-listed" in result["result_text"]

@@ -2,6 +2,7 @@ import base64
 import json
 import secrets
 import time
+from pathlib import Path
 
 import pytest
 
@@ -37,7 +38,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.claude_code_source.get_project_path", lambda raw: str(tmp_path))
     monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
     monkeypatch.setattr("agent.cursor_source.enrich_with_messages", lambda s: None)
-    monkeypatch.setattr("agent.permission_profile.missing_profile_reason", lambda p, t: None)
+    monkeypatch.setattr("agent.permission_profile.resolve_profile", lambda p, t, r: (Path(p) / "profile", None))
     launched = []
 
     def fake_run(cmd, cwd):

@@ -8,11 +8,14 @@
 {% else %}
 <form id="new-session-form">
   <label for="project-select">{{ t('new.project') }}</label>
-  <select id="project-select" name="project_path">
+  <input id="project-select" name="project_path" list="project-roots" value="{{ allowed_projects[0] }}"
+         autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  <datalist id="project-roots">
     {% for path in allowed_projects %}
-    <option value="{{ path }}">{{ path }}</option>
+    <option value="{{ path }}"></option>
     {% endfor %}
-  </select>
+  </datalist>
+  <p class="hint">{{ t('new.project_hint') }}</p>
   {% if enabled_tools | length > 1 %}
   <select name="tool" aria-label="Tool">
     {% for tool in enabled_tools %}

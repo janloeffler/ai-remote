@@ -12,6 +12,11 @@ Profile locations are the ones each vendor defines for project-scoped permission
 * Claude Code — `<project>/.claude/settings.json`
 * Cursor CLI  — `<project>/.cursor/cli.json`
 
+Because an allow-list entry covers its whole subtree, a Claude Code job in a subdirectory
+may be governed by a profile further up (at most as far as the allow-list entry itself,
+and the root-most valid one wins so its denies always apply);
+Cursor cannot be pointed at another file, so it needs its profile in the workspace.
+
 Both wrap their rules in `{"permissions": {"allow": [...], "deny": [...]}}`, but the
 rule *types* inside are NOT interchangeable, and that difference is a security trap
 rather than a cosmetic one. Cursor uses `Shell(...)` / `Mcp(...)`; Claude Code uses
@@ -23,6 +28,7 @@ checked against the tool that will actually read them.
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -77,14 +83,9 @@ def _setup_hint(tool: str) -> str:
     )
 
 
-def missing_profile_reason(project_path: str, tool: str) -> str | None:
-    """Returns None when `project_path` carries a usable permission profile for `tool`,
-    otherwise a human-readable reason the job must be refused."""
-    relative = PROFILE_PATHS.get(tool)
-    if relative is None:
-        return f"unknown tool: {tool}"
-
-    profile = Path(project_path).joinpath(*relative)
+def _validate(profile: Path, tool: str) -> str | None:
+    """None when the file at `profile` is a usable permission profile for `tool`,
+    otherwise the reason it is not."""
     if not profile.is_file():
         return f"missing permission profile: {profile} does not exist. {_setup_hint(tool)}"
 
@@ -114,3 +115,74 @@ def missing_profile_reason(project_path: str, tool: str) -> str | None:
             f"(expected entries like {sorted(_KNOWN_TYPES[tool])[0]}(...)). {_setup_hint(tool)}"
         )
     return None
+
+
+def missing_profile_reason(project_path: str, tool: str) -> str | None:
+    """Returns None when `project_path` itself carries a usable permission profile for
+    `tool`, otherwise a human-readable reason the job must be refused."""
+    relative = PROFILE_PATHS.get(tool)
+    if relative is None:
+        return f"unknown tool: {tool}"
+    return _validate(Path(project_path).joinpath(*relative), tool)
+
+
+def resolve_profile(project_path: str, tool: str, root: str) -> tuple[Path | None, str | None]:
+    """Decides whether a job in `project_path` has a governing permission profile.
+
+    Returns `(settings_file, None)` when the job is accepted, or `(None, reason)` when it
+    must be refused. `settings_file` is the profile the executor must hand to Claude Code
+    with `--settings`, or None when nothing extra is needed (Cursor, or the project's own
+    file is already the governing one).
+
+    Claude Code always auto-loads `<cwd>/.claude/settings.json` (no parent fallback) and
+    `--settings` adds a higher-precedence layer; permission arrays merge and deny wins.
+    Hence: a cwd file that exists but is invalid is refused outright (Claude would load it
+    anyway); the file passed via `--settings` is the *root-most* valid profile between the
+    project and `root` (the matching allow-list entry, never above it), so the root's
+    denies cannot be dropped by a nearer profile; invalid profiles in intermediate
+    directories are skipped, since Claude does not load them. The user-scope
+    `~/.claude/settings.json` is never treated as a project profile. Cursor can only read
+    `<workspace>/.cursor/cli.json`, so for it the project directory is the only place.
+    """
+    relative = PROFILE_PATHS.get(tool)
+    if relative is None:
+        return None, f"unknown tool: {tool}"
+
+    project = Path(os.path.realpath(project_path))
+    if tool == "cursor":
+        profile = project.joinpath(*relative)
+        reason = _validate(profile, tool)
+        if reason is None:
+            return None, None
+        return None, (
+            f"{reason} Cursor can only read the profile from the workspace itself, so "
+            f"{profile} must exist; inheriting a profile from an allow-listed parent "
+            f"directory only works for Claude Code."
+        )
+
+    top = Path(os.path.realpath(root))
+    if project != top and top not in project.parents:
+        return None, f"project path {project} is outside the allow-listed root {top}"
+
+    user_scope = Path(os.path.realpath(Path.home())).joinpath(*relative)
+    own = project.joinpath(*relative)
+    valid: list[Path] = []  # nearest first
+    problems = []
+    for directory in (project, *project.parents):
+        profile = directory.joinpath(*relative)
+        if profile != user_scope and profile.exists():
+            reason = _validate(profile, tool)
+            if reason is None:
+                valid.append(profile)
+            elif profile == own:
+                return None, f"invalid permission profile in the project itself (Claude Code would load it): {reason}"
+            else:
+                problems.append(reason)
+        if directory == top:
+            break
+    if not valid:
+        searched = f"searched {project} up to and including {top}"
+        detail = " ".join(problems) if problems else _setup_hint(tool)
+        return None, f"missing permission profile: no valid {'/'.join(relative)} found ({searched}). {detail}"
+    governing = valid[-1]
+    return (None if governing == own else governing), None

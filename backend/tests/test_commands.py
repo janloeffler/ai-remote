@@ -165,11 +165,11 @@ def test_new_session_form_shows_message_when_no_allowed_projects(logged_in_clien
     assert 'id="new-session-form"' not in response.text
 
 
-def test_new_session_form_renders_single_dropdown_form(logged_in_client):
+def test_new_session_form_renders_single_form(logged_in_client):
     response = logged_in_client.get("/projects/new")
     assert response.status_code == 200
     assert response.text.count('id="new-session-form"') == 1
-    assert '<select id="project-select" name="project_path">' in response.text
+    assert 'id="project-select" name="project_path"' in response.text
     assert '<option value="/Users/jan/source/demo">' in response.text
     # no more one <form> per project, no more per-project data-project-path forms
     assert "data-project-path" not in response.text
@@ -361,3 +361,28 @@ def test_plaintext_prompt_too_long_detail(logged_in_client):
 
     r = logged_in_client.post("/chats/claude-code:abc/command", json={"prompt": "x" * (PROMPT_MAX_LENGTH + 1)})
     assert r.status_code == 422 and r.json()["detail"] == "prompt too long"
+
+
+def test_new_session_command_allowed_in_subdirectory_of_allowed_root(logged_in_client):
+    response = logged_in_client.post(
+        "/projects/command",
+        json={"project_path": "/Users/jan/source/demo/sub/dir", "tool": "claude-code", "prompt": "hi"},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path", ["/Users/jan/source/demo-evil", "/Users/jan/source/demo/../other", "demo"]
+)
+def test_new_session_command_403_for_lookalike_and_escaping_paths(logged_in_client, path):
+    response = logged_in_client.post(
+        "/projects/command", json={"project_path": path, "tool": "claude-code", "prompt": "hi"}
+    )
+    assert response.status_code == 403
+
+
+def test_new_session_form_offers_free_text_path_with_roots_as_suggestions(logged_in_client):
+    html = logged_in_client.get("/projects/new").text
+    assert '<input id="project-select" name="project_path" list="project-roots"' in html
+    assert 'value="/Users/jan/source/demo"' in html
+    assert '<datalist id="project-roots">' in html

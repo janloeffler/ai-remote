@@ -32,3 +32,34 @@ def test_is_allowed_rejects_empty_path(monkeypatch):
 
     monkeypatch.setattr(settings, "ALLOWED_PROJECTS", [""])
     assert allowlist.is_allowed("") is False
+
+
+def test_is_allowed_permits_subdirectories(monkeypatch):
+    from app import settings, allowlist
+
+    monkeypatch.setattr(settings, "ALLOWED_PROJECTS", ["/Users/jan/source/foo"])
+    assert allowlist.is_allowed("/Users/jan/source/foo/sub/deeper") is True
+    assert allowlist.is_allowed("/Users/jan/source/foo/sub/") is True
+
+
+def test_is_allowed_rejects_dotdot_escape(monkeypatch):
+    from app import settings, allowlist
+
+    monkeypatch.setattr(settings, "ALLOWED_PROJECTS", ["/Users/jan/source/foo"])
+    assert allowlist.is_allowed("/Users/jan/source/foo/../../../../etc") is False
+    assert allowlist.is_allowed("/Users/jan/source/foo/../foo-evil") is False
+
+
+def test_is_allowed_rejects_relative_path(monkeypatch):
+    from app import settings, allowlist
+
+    monkeypatch.setattr(settings, "ALLOWED_PROJECTS", ["/Users/jan/source/foo"])
+    assert allowlist.is_allowed("source/foo") is False
+
+
+def test_is_allowed_ignores_root_slash(monkeypatch):
+    from app import settings, allowlist
+
+    monkeypatch.setattr(settings, "ALLOWED_PROJECTS", ["/"])
+    assert allowlist.is_allowed("/Users/jan/source/foo") is False
+    assert allowlist.is_allowed("/") is False

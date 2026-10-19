@@ -72,7 +72,11 @@ its Python dependencies (`agent/requirements.txt`) installed even in plaintext m
 Two things must be configured before the "continue chat" / "new session" features
 will do anything:
 
-1. `AI_REMOTE_ALLOWED_PROJECTS` — a comma-separated list of absolute project paths.
+1. `AI_REMOTE_ALLOWED_PROJECTS` — a comma-separated list of absolute paths. Each entry allows
+   that directory **and everything below it**, so one entry such as `~/source` (written
+   absolute) covers every project inside. Matching is by path component (`/x/source`
+   does not admit `/x/source-evil`) on resolved paths: the agent follows symlinks and
+   `..`, so a symlink inside an allowed tree that leads outside it is refused.
    The agent itself has no dotenv loading, so this is **not** set in a `.env` file
    inside `agent/`. Instead, set it in the repo-root `.env` (the same file that holds
    `API_KEY`/`AI_REMOTE_BACKEND_URL`), then run (or re-run) `./setup-agent.sh` from
@@ -81,18 +85,35 @@ will do anything:
    environment variable. **Must exactly match** the same-named variable set in the
    backend's `.env` on the server — these are two independently-configured copies,
    checked independently by each side (defense in depth), never synced between them
-   and never editable via any API route. Entries must be written in their canonical
-   (symlink-resolved) form — e.g. run `cd <dir> && pwd -P` to get the exact string to
-   use — since Claude Code records the OS-canonicalized `cwd` and this side never
-   normalizes paths itself; this matters especially for paths under `/tmp` or other
-   commonly-symlinked locations (on macOS, `/tmp` resolves to `/private/tmp`).
-2. Each allow-listed project needs a `permissions.allow`/`deny` profile of its own, in
+   and never editable via any API route. Write entries in their canonical
+   (symlink-resolved) form — e.g. run `cd <dir> && pwd -P` — because the backend only
+   compares paths lexically (it cannot see this Mac's filesystem) and Claude Code
+   records the OS-canonicalized `cwd`; this matters especially for paths under `/tmp` or
+   other commonly-symlinked locations (on macOS, `/tmp` resolves to `/private/tmp`).
+   The new-session form takes a free-text path (allowed roots are suggestions), so a
+   session can be started in any subdirectory.
+2. Every job needs a `permissions.allow`/`deny` profile that applies to its directory, in
    the location and **dialect** of the tool that will read it:
 
    | Tool | File | Rule types | Starter template |
    |---|---|---|---|
    | Claude Code | `<project>/.claude/settings.json` | `Bash(...)`, `Edit(...)`, `Read(...)`, `Write(...)`, `WebFetch(...)`, … | `docs/superpowers/reference/remote-agent-permissions.claude-code.json` |
    | cursor-agent | `<project>/.cursor/cli.json` | `Shell(...)`, `Read(...)`, `Write(...)`, `WebFetch(...)`, `Mcp(...)` | `docs/superpowers/reference/remote-agent-permissions.cursor-cli.json` |
+
+   Where the profile may live, since an allow-list entry covers a whole subtree: Claude
+   Code only auto-loads `<cwd>/.claude/settings.json`, so for a job in a subdirectory the
+   agent picks the root-most valid profile from the project up to and including the
+   matching allow-list entry (never above it) and, if it is not the project's own, passes
+   it explicitly with `claude --settings <file>` (permission rules merge and deny wins, so
+   the root's denies always apply on top of the project's own file). A project's own
+   `.claude/settings.json` that exists but is invalid is refused, since Claude loads it
+   anyway; invalid profiles in intermediate directories are skipped, and
+   `~/.claude/settings.json` is never used as a project profile. Put one profile at the
+   allowed root and every project below inherits it. Allow-list entries that resolve to
+   `/`, `$HOME` or an ancestor of `$HOME` are ignored. Cursor CLI reads project
+   permissions only from `<workspace>/.cursor/cli.json` and cannot be pointed at another file, so there the
+   profile must exist in the workspace itself — inheritance from an allowed root only
+   works for Claude Code.
 
    Both files wrap their rules in the same `{"permissions": {"allow": […], "deny": […]}}`
    envelope, **but the rule types inside are not interchangeable.** Cursor has no
@@ -104,7 +125,7 @@ will do anything:
 
    **This is enforced, not advisory.** The agent still never writes the file for you,
    but a remote job is refused with `status: failed` — and the CLI is never invoked —
-   when the target project's profile is missing, empty, unparseable, or written in the
+   when no applicable profile is found or it is missing, empty, unparseable, or written in the
    other tool's dialect. See `agent/agent/permission_profile.py`. Note the profile is a
    *deny*-oriented list and only scopes what the CLI will do; read `SECURITY.md` before
    allow-listing anything, because remote command execution is this tool's purpose and

@@ -17,14 +17,24 @@ data. Read this whole file before you expose the backend to the internet.
   you type into `/login`. It must be at least 32 characters (`openssl rand -hex 32`);
   the backend refuses to start otherwise. `SECRET_KEY` signs the session cookie.
 - **Two independent allow-list checks.** Remote commands may only run in paths listed
-  in `AI_REMOTE_ALLOWED_PROJECTS`, which is checked separately by the backend and by
-  the agent. Neither copy is editable through any API route.
-- **Per-project permission profiles, enforced.** A remote job is refused unless the
-  target project has a permission profile written in the dialect of the tool that will
+  in `AI_REMOTE_ALLOWED_PROJECTS` or below them (matched by path component, so
+  `/x/source` never admits `/x/source-evil`), which is checked separately by the backend
+  (lexical, `..` collapsed) and by the agent (symlinks resolved, so a link leading out of
+  an allowed tree is refused). Neither copy is editable through any API route.
+- **Per-project permission profiles, enforced.** A remote job is refused unless a
+  permission profile applies to its directory written in the dialect of the tool that will
   read it — `.claude/settings.json` (`Bash(...)`/`Edit(...)`) for Claude Code,
   `.cursor/cli.json` (`Shell(...)`/`Mcp(...)`) for cursor-agent. The two are **not**
   interchangeable, and a profile using the other tool's rule types is rejected rather
-  than accepted as if it constrained anything. See `agent/README.md`.
+  than accepted as if it constrained anything. Because an allow-list entry covers its
+  subtree, Claude Code uses the root-most valid profile between the project and the
+  allow-listed root (passed explicitly with `--settings`, never from above the root, so
+  the root's denies merge with the project's own); an invalid project-own
+  `.claude/settings.json` is refused because Claude would load it anyway, and
+  `~/.claude/settings.json` is never counted as a project profile. Allow-list roots of
+  `/` are ignored by the backend and agent, and the agent also ignores `$HOME` and its
+  ancestors. Cursor can only read the workspace's own `.cursor/cli.json`, so a subdirectory without
+  one is refused. See `agent/README.md`.
 - **A kill switch and an audit log.** `/settings/pause-remote-commands` stops all
   remote execution; `/jobs` lists every job ever queued with its result.
 - **Sessions tied to the key.** The session cookie is signed, `SameSite=Lax`, `Secure` in

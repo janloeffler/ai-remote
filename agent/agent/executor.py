@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 
 from . import ai_tools, allowlist, claude_code_source, cursor_source, permission_profile
 
@@ -110,6 +111,12 @@ def _rejected(reason: str) -> dict:
     return {"status": "failed", "result_text": reason, "messages": [], "is_complete": False}
 
 
+def _settings_args(settings_file: Path | None) -> list[str]:
+    """Claude Code only auto-loads `<cwd>/.claude/settings.json`; a profile inherited from
+    an ancestor directory has to be handed over explicitly or it would not apply."""
+    return [] if settings_file is None else ["--settings", str(settings_file)]
+
+
 def execute_resume_message(
     job: dict, allowed_projects: list[str], enabled_tools: Sequence[str] = ai_tools.ALL_TOOLS
 ) -> dict:
@@ -129,7 +136,11 @@ def execute_resume_message(
 
     if not project_path:
         return _rejected("could not resolve project path for session")
-    if not allowlist.is_allowed(project_path, allowed_projects):
+    # Resolve once and use this exact path for every later step (allow-list, profile,
+    # cwd, --workspace), so a symlink swapped in between check and use cannot redirect.
+    project_path = os.path.realpath(project_path)
+    root = allowlist.matching_root(project_path, allowed_projects)
+    if root is None:
         return _rejected(f"project path is not allow-listed: {project_path}")
 
     payload = _parse_json_payload(job.get("payload", ""))
@@ -137,7 +148,7 @@ def execute_resume_message(
     if not prompt:
         return _rejected("missing prompt in job payload")
 
-    reason = permission_profile.missing_profile_reason(project_path, tool)
+    settings_file, reason = permission_profile.resolve_profile(project_path, tool, root)
     if reason:
         return _rejected(reason)
 
@@ -146,7 +157,8 @@ def execute_resume_message(
     # option (`--add-dir=/`, `--append-system-prompt=…`, `--mcp-config=…`), which walks
     # straight past the project allow-list.
     if tool == "claude-code":
-        cmd = CLAUDE_CLI + ["-p", "--resume", raw_id, "--permission-mode", "dontAsk", "--", prompt]
+        cmd = CLAUDE_CLI + ["-p", "--resume", raw_id, "--permission-mode", "dontAsk"]
+        cmd += _settings_args(settings_file) + ["--", prompt]
     else:
         cmd = CURSOR_AGENT_CLI + ["--resume", raw_id, "-p", "--force", "--workspace", project_path, "--", prompt]
 
@@ -157,7 +169,10 @@ def execute_new_session(
     job: dict, allowed_projects: list[str], enabled_tools: Sequence[str] = ai_tools.ALL_TOOLS
 ) -> dict:
     project_path = job["target"]
-    if not allowlist.is_allowed(project_path, allowed_projects):
+    if project_path and os.path.isabs(project_path):
+        project_path = os.path.realpath(project_path)  # see execute_resume_message
+    root = allowlist.matching_root(project_path, allowed_projects)
+    if root is None:
         return _rejected(f"project path is not allow-listed: {project_path}")
 
     payload = _parse_json_payload(job.get("payload", ""))
@@ -168,14 +183,15 @@ def execute_new_session(
     if tool not in enabled_tools:
         return _rejected(f"tool is disabled: {tool}")
 
-    reason = permission_profile.missing_profile_reason(project_path, tool)
+    settings_file, reason = permission_profile.resolve_profile(project_path, tool, root)
     if reason:
         return _rejected(reason)
 
     # See execute_resume_message: `--` keeps an attacker-supplied prompt out of option
     # position.
     if tool == "claude-code":
-        cmd = CLAUDE_CLI + ["-p", "--permission-mode", "dontAsk", "--", prompt]
+        cmd = CLAUDE_CLI + ["-p", "--permission-mode", "dontAsk"]
+        cmd += _settings_args(settings_file) + ["--", prompt]
     else:
         cmd = CURSOR_AGENT_CLI + ["-p", "--force", "--workspace", project_path, "--", prompt]
 
