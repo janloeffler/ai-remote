@@ -287,3 +287,43 @@ def test_run_cycle_skips_disabled_sources(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(main.uploader, "push_sync", lambda *a, **k: True)
     monkeypatch.setattr(main.jobs, "fetch_pending_jobs", lambda *a, **k: {"jobs": []})
     main.run_cycle(config, client=None)  # cursor source must not be touched
+
+
+def _job_cycle(tmp_path, monkeypatch, job_type, status, sync_raises=False):
+    events = []
+    monkeypatch.setattr("agent.claude_code_source.list_claude_code_sessions", lambda: [])
+    monkeypatch.setattr("agent.cursor_source.list_cursor_sessions", lambda: [])
+    monkeypatch.setattr(
+        "agent.jobs.fetch_pending_jobs",
+        lambda base_url, api_key, client: {"jobs": [{"id": "j1", "type": job_type, "target": "t"}]},
+    )
+    monkeypatch.setattr("agent.executor.execute_resume_message", lambda *a, **k: {"status": status, "result_text": ""})
+    monkeypatch.setattr("agent.executor.execute_new_session", lambda *a, **k: {"status": status, "result_text": ""})
+
+    def fake_sync(config, client, keys):
+        events.append("sync")
+        if sync_raises and events.count("sync") > 1:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(main, "_sync_sessions", fake_sync)
+    monkeypatch.setattr("agent.jobs.report_job_result", lambda *a, **k: events.append("report"))
+    config = main.Config(
+        backend_url="http://backend.example", api_key="k", state_path=tmp_path / "s.json", interval_seconds=60
+    )
+    main.run_cycle(config, client=None)
+    return events
+
+
+@pytest.mark.parametrize("job_type", ["resume_message", "new_session"])
+def test_done_command_job_syncs_before_reporting(tmp_path, monkeypatch, job_type):
+    assert _job_cycle(tmp_path, monkeypatch, job_type, "done") == ["sync", "sync", "report"]
+
+
+@pytest.mark.parametrize("job_type", ["resume_message", "new_session"])
+def test_failed_command_job_does_not_resync(tmp_path, monkeypatch, job_type):
+    assert _job_cycle(tmp_path, monkeypatch, job_type, "failed") == ["sync", "report"]
+
+
+def test_job_result_is_reported_even_when_the_sync_fails(tmp_path, monkeypatch):
+    events = _job_cycle(tmp_path, monkeypatch, "new_session", "done", sync_raises=True)
+    assert events == ["sync", "sync", "report"]

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -386,3 +388,39 @@ def test_new_session_form_offers_free_text_path_with_roots_as_suggestions(logged
     assert '<input id="project-select" name="project_path" list="project-roots"' in html
     assert 'value="/Users/jan/source/demo"' in html
     assert '<datalist id="project-roots">' in html
+
+
+def _pending_payload(client, job_id):
+    pending = client.get("/jobs/pending", headers={"Authorization": "Bearer test-api-key-1234567890-abcdefgh"}).json()["jobs"]
+    return json.loads(next(j for j in pending if j["id"] == job_id)["payload"])
+
+
+def test_new_claude_session_gets_a_known_uuid_session_id(logged_in_client):
+    import uuid
+
+    job_id = logged_in_client.post(
+        "/projects/command",
+        json={"project_path": "/Users/jan/source/demo", "tool": "claude-code", "prompt": "hi"},
+    ).json()["job_id"]
+    session_id = _pending_payload(logged_in_client, job_id)["session_id"]
+    assert str(uuid.UUID(session_id)) == session_id
+    status = logged_in_client.get(f"/jobs/{job_id}/status").json()
+    assert status["session_id"] == f"claude-code:{session_id}"
+
+
+def test_new_cursor_session_has_no_session_id(logged_in_client, monkeypatch):
+    from app import settings
+
+    monkeypatch.setattr(settings, "ENABLED_TOOLS", ("claude-code", "cursor"))
+    job_id = logged_in_client.post(
+        "/projects/command",
+        json={"project_path": "/Users/jan/source/demo", "tool": "cursor", "prompt": "hi"},
+    ).json()["job_id"]
+    assert "session_id" not in _pending_payload(logged_in_client, job_id)
+    assert logged_in_client.get(f"/jobs/{job_id}/status").json()["session_id"] is None
+
+
+def test_resume_job_status_returns_the_session_id(logged_in_client):
+    _sync_session(logged_in_client)
+    job_id = logged_in_client.post("/chats/claude-code:abc/command", json={"prompt": "go"}).json()["job_id"]
+    assert logged_in_client.get(f"/jobs/{job_id}/status").json()["session_id"] == "claude-code:abc"

@@ -644,3 +644,49 @@ def test_sibling_prefix_directory_is_rejected_by_executor(tmp_path):
 
     assert result["status"] == "failed"
     assert "not allow-listed" in result["result_text"]
+
+
+NEW_SESSION_UUID = "0b9a3c1e-5d2f-4a6b-8c7d-1e2f3a4b5c6d"
+
+
+def _new_session_job(tmp_path, tool, **extra):
+    return {
+        "id": "j1",
+        "type": "new_session",
+        "target": str(tmp_path),
+        "payload": json.dumps({"prompt": "hi", "tool": tool, **extra}),
+    }
+
+
+def test_new_session_claude_passes_session_id_before_separator(tmp_path, monkeypatch):
+    captured = _capture_cmd(monkeypatch)
+
+    executor.execute_new_session(
+        _new_session_job(tmp_path, "claude-code", session_id=NEW_SESSION_UUID), allowed_projects=[str(tmp_path)]
+    )
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--session-id") + 1] == NEW_SESSION_UUID
+    assert cmd.index("--session-id") < cmd.index("--")
+
+
+@pytest.mark.parametrize("bad", ["abc", NEW_SESSION_UUID.upper(), "{" + NEW_SESSION_UUID + "}", "--add-dir=/", 5, ""])
+def test_new_session_rejects_invalid_session_id(tmp_path, monkeypatch, bad):
+    captured = _capture_cmd(monkeypatch)
+
+    result = executor.execute_new_session(
+        _new_session_job(tmp_path, "claude-code", session_id=bad), allowed_projects=[str(tmp_path)]
+    )
+
+    assert result["status"] == "failed"
+    assert "cmd" not in captured
+
+
+def test_new_session_cursor_ignores_session_id(tmp_path, monkeypatch):
+    captured = _capture_cmd(monkeypatch)
+
+    executor.execute_new_session(
+        _new_session_job(tmp_path, "cursor", session_id=NEW_SESSION_UUID), allowed_projects=[str(tmp_path)]
+    )
+
+    assert "--session-id" not in captured["cmd"]

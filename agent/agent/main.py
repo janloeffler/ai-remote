@@ -79,6 +79,16 @@ def _push_in_batches(config: Config, client: httpx.Client, deltas: list[dict], s
         _upload_images(config, client, uploaded_from, keys)
 
 
+def _sync_sessions(config: Config, client: httpx.Client, keys) -> None:
+    claude_sessions = (
+        claude_code_source.list_claude_code_sessions() if ai_tools.CLAUDE_CODE in config.enabled_tools else []
+    )
+    cursor_sessions = cursor_source.list_cursor_sessions() if ai_tools.CURSOR in config.enabled_tools else []
+    synced = state.load_synced_ids(config.state_path)
+    deltas = state.compute_deltas(claude_sessions + cursor_sessions, synced)
+    _push_in_batches(config, client, deltas, synced, keys)
+
+
 def run_cycle(config: Config, client: httpx.Client) -> int | None:
     if not config.enabled_tools:
         print(ai_tools.NONE_ENABLED_MESSAGE, file=sys.stderr)
@@ -88,15 +98,7 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
     if not proceed:
         return None
 
-    claude_sessions = (
-        claude_code_source.list_claude_code_sessions() if ai_tools.CLAUDE_CODE in config.enabled_tools else []
-    )
-    cursor_sessions = cursor_source.list_cursor_sessions() if ai_tools.CURSOR in config.enabled_tools else []
-
-    synced = state.load_synced_ids(config.state_path)
-
-    deltas = state.compute_deltas(claude_sessions + cursor_sessions, synced)
-    _push_in_batches(config, client, deltas, synced, keys)
+    _sync_sessions(config, client, keys)
 
     next_interval = None
     try:
@@ -130,6 +132,13 @@ def run_cycle(config: Config, client: httpx.Client) -> int | None:
                         report_messages = None
                         plain_messages = None
                 result_text = seal.seal_result_text(job["id"], result_text, keys)
+            if job["type"] in ("resume_message", "new_session") and result["status"] == "done":
+                # The UI reloads / opens the chat as soon as it sees "done"; the new messages
+                # must be on the server by then, not only on the next cycle.
+                try:
+                    _sync_sessions(config, client, keys)
+                except Exception as exc:
+                    print(f"job {job.get('id')}: sync before report failed: {exc}", file=sys.stderr)
             jobs.report_job_result(
                 config.backend_url,
                 config.api_key,

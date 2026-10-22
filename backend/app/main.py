@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -718,12 +719,11 @@ def send_new_session_command(body: NewSessionCommandRequest, conn=Depends(db.get
         raise HTTPException(status_code=403, detail="tool is disabled")
     if not allowlist.is_allowed(body.project_path):
         raise HTTPException(status_code=403, detail="project path is not allow-listed")
-    job_id = db.create_job(
-        conn,
-        "new_session",
-        body.project_path,
-        payload=json.dumps({"prompt": body.prompt, "tool": body.tool}),
-    )
+    payload = {"prompt": body.prompt, "tool": body.tool}
+    if body.tool == ai_tools.CLAUDE_CODE:
+        # Known up front so the UI can open the chat once the job is done.
+        payload["session_id"] = str(uuid.uuid4())
+    job_id = db.create_job(conn, "new_session", body.project_path, payload=json.dumps(payload))
     interval = db.current_poll_interval_seconds(
         conn, settings.AI_REMOTE_INTERVAL_SECONDS, settings.AI_REMOTE_ACTIVE_INTERVAL_SECONDS
     )
@@ -733,11 +733,30 @@ def send_new_session_command(body: NewSessionCommandRequest, conn=Depends(db.get
     return {"job_id": job_id, "eta_seconds": eta_seconds}
 
 
+def _job_session_id(job: dict) -> str | None:
+    """Backend id of the chat a resume/new-session job works on, when known."""
+    if job["type"] == "resume_message":
+        return job["target"]
+    if job["type"] == "new_session":
+        try:
+            payload = json.loads(job.get("payload") or "{}")
+        except json.JSONDecodeError:
+            return None
+        session_id = payload.get("session_id") if isinstance(payload, dict) else None
+        if isinstance(session_id, str) and session_id:
+            return f"{ai_tools.CLAUDE_CODE}:{session_id}"
+    return None
+
+
 @app.get("/jobs/{job_id}/status", dependencies=[Depends(require_session)])
 def job_status_generic(job_id: str, conn=Depends(db.get_db_dependency)):
     db.fail_stale_jobs(conn)
     job = db.get_job(conn, job_id)
-    return {"status": job["status"] if job else "unknown", "result_text": job["result_text"] if job else None}
+    return {
+        "status": job["status"] if job else "unknown",
+        "result_text": job["result_text"] if job else None,
+        "session_id": _job_session_id(job) if job else None,
+    }
 
 
 @app.get("/jobs", dependencies=[Depends(require_session)])

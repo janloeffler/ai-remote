@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -107,6 +108,15 @@ def _run_and_report(cmd: list[str], cwd: str) -> dict:
     return {"status": "done", "result_text": truncated, "messages": [], "is_complete": False}
 
 
+def _is_canonical_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
 def _rejected(reason: str) -> dict:
     return {"status": "failed", "result_text": reason, "messages": [], "is_complete": False}
 
@@ -183,6 +193,11 @@ def execute_new_session(
     if tool not in enabled_tools:
         return _rejected(f"tool is disabled: {tool}")
 
+    # The backend pre-assigns the id of a new Claude Code session so the UI can open it.
+    session_id = payload.get("session_id") if tool == "claude-code" else None
+    if session_id is not None and not _is_canonical_uuid(session_id):
+        return _rejected("invalid session_id in job payload")
+
     settings_file, reason = permission_profile.resolve_profile(project_path, tool, root)
     if reason:
         return _rejected(reason)
@@ -191,6 +206,8 @@ def execute_new_session(
     # position.
     if tool == "claude-code":
         cmd = CLAUDE_CLI + ["-p", "--permission-mode", "dontAsk"]
+        if session_id:
+            cmd += ["--session-id", session_id]
         cmd += _settings_args(settings_file) + ["--", prompt]
     else:
         cmd = CURSOR_AGENT_CLI + ["-p", "--force", "--workspace", project_path, "--", prompt]

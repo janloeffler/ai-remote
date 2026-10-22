@@ -351,7 +351,7 @@ def test_generic_job_status_endpoint(logged_in_client):
 
 def test_generic_job_status_unknown_job(logged_in_client):
     response = logged_in_client.get("/jobs/does-not-exist/status")
-    assert response.json() == {"status": "unknown", "result_text": None}
+    assert response.json() == {"status": "unknown", "result_text": None, "session_id": None}
 
 
 def test_jobs_audit_page_lists_jobs_newest_first(logged_in_client):

@@ -251,7 +251,8 @@ document.addEventListener("DOMContentLoaded", () => {
       .then((data) => {
         if (data.status === "done") {
           countdown.stop();
-          status.textContent = t("js.command_done");
+          status.textContent = t("js.done_reload");
+          location.reload();
         } else if (data.status === "failed") {
           countdown.stop();
           const msg = e2eActive() ? E2E.decryptResult(data.result_text, jobId) : Promise.resolve(data.result_text);
@@ -260,6 +261,10 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           button.disabled = false;
         } else {
+          if (data.status === "running") {
+            countdown.stop();
+            status.textContent = t("js.running");
+          }
           setTimeout(() => poll(jobId), 3000);
         }
       })
@@ -330,8 +335,9 @@ document.addEventListener("DOMContentLoaded", () => {
       .then((data) => {
         if (data.status === "done") {
           countdown.stop();
-          status.textContent = t("js.new_done");
-          button.disabled = false;
+          status.textContent = t("js.done_reload");
+          // Cursor sessions get their id from the tool, so the chat list is the best we can open.
+          location.href = data.session_id ? "/chats/" + encodeURIComponent(data.session_id) : "/";
         } else if (data.status === "failed") {
           countdown.stop();
           const msg = e2eActive() ? E2E.decryptResult(data.result_text, jobId) : Promise.resolve(data.result_text);
@@ -340,6 +346,10 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           button.disabled = false;
         } else {
+          if (data.status === "running") {
+            countdown.stop();
+            status.textContent = t("js.running");
+          }
           setTimeout(() => poll(jobId, projectPath), 3000);
         }
       })
