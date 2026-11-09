@@ -1,5 +1,5 @@
 # Test-only dependencies. Not installed into the container image.
 -r requirements.in
 -c requirements.txt
-pytest>=8.3
+pytest>=9.2.0
 watchfiles>=1.0   # only for `uvicorn --reload` in local development
